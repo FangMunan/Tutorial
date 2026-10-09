@@ -1,0 +1,1 @@
+Trigger H0 MNIST cloud run
