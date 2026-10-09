@@ -1,0 +1,80 @@
+name: H1-B Izh Feature Fusion
+
+on:
+  push:
+    branches:
+      - h1b-izh-fusion-20261009
+    paths:
+      - 'h1_cloud/**'
+      - '.github/workflows/h1b_mnist_izh_fusion.yml'
+  workflow_dispatch:
+
+jobs:
+  h1b-izh-fusion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy scikit-learn torch torchvision
+
+      - name: Compile H1-B sources
+        run: |
+          python -m py_compile h1_cloud/h0_base.py h1_cloud/h1_sparse_fusion.py h1_cloud/h1b_izh_fusion.py
+
+      - name: Run H1-B MNIST Izh fusion gate
+        run: |
+          mkdir -p h1_cloud/run/H1B_IZH
+          python h1_cloud/h1b_izh_fusion.py \
+            --out h1_cloud/run/H1B_IZH \
+            --n-per-class 2000 \
+            --epochs-linear 18 \
+            --gate-epochs 2 \
+            --batch 256 \
+            --d 128 \
+            --layers 4 \
+            --heads 4 \
+            --ff 512 \
+            --features 128 \
+            --steps 10 \
+            --temp 0.25 \
+            --eval-n 30 \
+            --ref-epochs 3 \
+            --seed 7 \
+            --threads 4 | tee h1_cloud/run/H1B_IZH/run.log
+
+      - name: Show H1-B summary
+        if: always()
+        run: |
+          if [ -f h1_cloud/run/H1B_IZH/H1B_RESULTS.json ]; then
+            python - <<'PY'
+          import json
+          d=json.load(open('h1_cloud/run/H1B_IZH/H1B_RESULTS.json'))
+          print(json.dumps({
+            'stage': d.get('stage'),
+            'selected': d.get('selected'),
+            'audits': d.get('audits'),
+            'generation': d.get('generation'),
+            'gate': d.get('gate'),
+            'claims': d.get('claims'),
+          }, indent=2))
+          PY
+          fi
+
+      - name: Upload H1-B results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: H1B_IZH_RESULTS
+          path: h1_cloud/run/H1B_IZH
+          if-no-files-found: warn
+          retention-days: 14
