@@ -1,0 +1,97 @@
+name: H1-B2.1 QK Layer Scan
+
+on:
+  push:
+    branches:
+      - h1b21-qk-layer-scan-20261009
+    paths:
+      - 'h1_cloud/**'
+      - '.github/workflows/h1b21_qk_layer_scan.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  h1b21-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy scikit-learn torch torchvision
+
+      - name: Download frozen H1-B artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p h1_cloud/reuse/H1B_IZH
+          gh run download 37980789193 \
+            --repo FangMunan/Tutorial \
+            --name H1B_IZH_RESULTS \
+            --dir h1_cloud/reuse/H1B_IZH
+          test -f h1_cloud/reuse/H1B_IZH/linear_base/best.pt
+          test -f h1_cloud/reuse/H1B_IZH/selective_gate.pt
+          test -f h1_cloud/reuse/H1B_IZH/izh_feature_map.pt
+
+      - name: Compile B2.1 source
+        run: |
+          python -m py_compile \
+            h1_cloud/h0_base.py \
+            h1_cloud/h1_sparse_fusion.py \
+            h1_cloud/h1b_izh_fusion.py \
+            h1_cloud/h1b2_error_localization.py \
+            h1_cloud/h1b21_qk_layer_scan.py
+
+      - name: Run H1-B2.1 scan
+        run: |
+          mkdir -p h1_cloud/run/H1B21_SCAN
+          python h1_cloud/h1b21_qk_layer_scan.py \
+            --reuse h1_cloud/reuse/H1B_IZH \
+            --out h1_cloud/run/H1B21_SCAN \
+            --n-per-class 2000 \
+            --d 128 \
+            --layers 4 \
+            --heads 4 \
+            --ff 512 \
+            --features 128 \
+            --seed 7 \
+            --threads 4 | tee h1_cloud/run/H1B21_SCAN/run.log
+
+      - name: Show B2.1 summary
+        if: always()
+        run: |
+          if [ -f h1_cloud/run/H1B21_SCAN/H1B21_RESULTS.json ]; then
+            python - <<'PY'
+          import json
+          p='h1_cloud/run/H1B21_SCAN/H1B21_RESULTS.json'
+          d=json.load(open(p))
+          print(json.dumps({
+            'stage': d.get('stage'),
+            'baseline': d.get('baseline'),
+            'combined': d.get('combined'),
+            'improvement': d.get('improvement'),
+            'selected': d.get('selected'),
+            'decision_targets': d.get('decision_targets'),
+          }, indent=2))
+          PY
+          fi
+
+      - name: Upload B2.1 results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: H1B21_QK_LAYER_SCAN
+          path: h1_cloud/run/H1B21_SCAN
+          if-no-files-found: warn
+          retention-days: 14
