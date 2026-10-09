@@ -1,0 +1,85 @@
+name: H0 MNIST Cloud
+
+on:
+  push:
+    branches:
+      - h0-mnist-cloud-20261009
+    paths:
+      - 'h0_cloud/**'
+      - '.github/workflows/h0_mnist_cloud.yml'
+  workflow_dispatch:
+
+jobs:
+  h0-mnist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy scikit-learn torch torchvision
+
+      - name: Decode H0 runner
+        run: |
+          mkdir -p h0_cloud/run
+          base64 -d h0_cloud/h0_from_scratch.py.gz.b64 | gzip -d > h0_cloud/run/h0_from_scratch.py
+          python -m py_compile h0_cloud/run/h0_from_scratch.py
+
+      - name: Run scientific MNIST-012 H0
+        run: |
+          python h0_cloud/run/h0_from_scratch.py \
+            --out h0_cloud/run/H0_MNIST \
+            --n-per-class 2000 \
+            --epochs-softmax 18 \
+            --epochs-linear 18 \
+            --gate-epochs 2 \
+            --batch 256 \
+            --d 128 \
+            --layers 4 \
+            --heads 4 \
+            --ff 512 \
+            --features 128 \
+            --steps 10 \
+            --temp 0.25 \
+            --eval-n 300 \
+            --ref-epochs 3 \
+            --alpha '1,0.995,0.99,0.98,0.95' \
+            --seed 7 \
+            --threads 4 | tee h0_cloud/run/H0_MNIST/run.log
+
+      - name: Show summary
+        if: always()
+        run: |
+          if [ -f h0_cloud/run/H0_MNIST/H0_RESULTS.json ]; then
+            python - <<'PY'
+          import json
+          p='h0_cloud/run/H0_MNIST/H0_RESULTS.json'
+          d=json.load(open(p))
+          print(json.dumps({
+            'identity_audit':d.get('identity_audit'),
+            'models':d.get('models'),
+            'generation':d.get('generation'),
+            'controls':d.get('controls'),
+            'selective_gate':d.get('selective_gate'),
+            'reference_classifier_test_acc':d.get('reference_classifier_test_acc'),
+          }, indent=2))
+          PY
+          fi
+
+      - name: Upload H0 results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: H0_MNIST_RESULTS
+          path: h0_cloud/run/H0_MNIST
+          if-no-files-found: warn
+          retention-days: 14
