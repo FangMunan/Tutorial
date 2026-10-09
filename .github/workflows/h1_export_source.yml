@@ -1,0 +1,39 @@
+name: H1 Export H0 Source
+
+on:
+  push:
+    branches:
+      - h1-full-dynamics-fusion-20261009
+    paths:
+      - '.github/workflows/h1_export_source.yml'
+      - 'h0_cloud/h0_from_scratch.py.gz.b64'
+
+permissions:
+  contents: write
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: h1-full-dynamics-fusion-20261009
+
+      - name: Decode frozen H0 source
+        run: |
+          mkdir -p h1_cloud
+          base64 -d h0_cloud/h0_from_scratch.py.gz.b64 | gzip -d > h1_cloud/h0_base.py
+          python -m py_compile h1_cloud/h0_base.py
+
+      - name: Commit decoded source for H1 integration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add h1_cloud/h0_base.py
+          if git diff --cached --quiet; then
+            echo "No source change"
+          else
+            git commit -m "Export frozen H0 source for H1 fusion"
+            git push origin HEAD:h1-full-dynamics-fusion-20261009
+          fi
