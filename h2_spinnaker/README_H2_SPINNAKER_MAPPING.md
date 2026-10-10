@@ -1,212 +1,146 @@
 # H2 — Full Resident SpiNNaker Mapping
 
-## Purpose
+## 1. Purpose
 
-This directory is the hand-off point from the validated cloud model to the first
-full-architecture SpiNNaker experiment.  The objective is **not** to replay only the
-Izhikevich feature map on hardware.  The objective is to keep the core generation
-trajectory resident on SpiNNaker long enough to measure the architecture as a system.
+This directory is the hand-off from the validated cloud model to the first **full-architecture** SpiNNaker experiment.  The target is not an Izhikevich-only replay.  The target is to keep the generation trajectory and the core model computation resident on SpiNNaker long enough to measure the architecture as a system.
 
-The frozen software reference currently contains:
+Frozen software reference at the hand-off point:
 
-- a 49-token MNIST MaskGIT generator;
-- 4 linear-attention blocks, width 128, 4 heads, FFN width 512;
-- positive random-feature H/g attention;
-- block-1 persistent H/g state with learned selective retention;
-- monotonic reveal and event-sparse block-1 execution;
-- Q/K- and layer-specific 6-ms Izhikevich dynamical feature calibration.
+- 49-token MNIST MaskGIT generator;
+- width 128, 4 blocks, 4 heads, FFN width 512;
+- normalized positive-feature H/g linear attention;
+- persistent H/g only in block 1, with learned selective retention;
+- monotonic reveal and validated H1 block-1 sparse execution;
+- Q/K- and layer-specific 6-ms Izhikevich dynamic-feature calibration;
+- B2.1 end-to-end feature replacement error approximately 0.063% fresh and 0.081% worst persistent trajectory.
 
-The H2 hardware experiment must preserve these semantics first.  Hardware-oriented
-changes are allowed only when they pass an explicit equivalence audit.
+H2 preserves this computation first.  Architecture changes are allowed later, but only after a baseline hardware profile identifies the real bottleneck.
 
----
+## 2. Important terminology
 
-## Main hardware principle: resident execution
+The immediate H2 experiment is **full-board inference / generation-trajectory validation**, not yet on-chip training.  The current learned weights came from cloud training and there is not yet a frozen local on-chip learning rule for the full model.  Calling this stage “training” would mix two scientific questions.  Full on-chip learning should be introduced as a separate stage after the resident forward architecture is validated.
 
-Host-to-board communication is treated as setup/teardown, not as part of every model
-step.  A normal H2 run should therefore be:
+## 3. Resident execution is the primary communication rule
 
-1. allocate machine once;
-2. upload model image, calibration, inputs and random/trajectory control once;
-3. execute all requested generation/teacher-forced steps on the board;
-4. write only compact results/profiling counters to SDRAM;
-5. bulk-read results once at the end.
+Normal H2 execution must be:
 
-Do **not** implement the model as a loop of `run -> get_data -> host compute -> inject -> run`.
-Do not stream membrane voltages or H/g to the host in production profiling mode.
-A separate debug mode may record selected internal states for one sample.
+1. allocate the machine once;
+2. upload model/calibration/input batches once;
+3. execute all requested generation or teacher-forced steps on board;
+4. store compact results and profiling counters in SDRAM;
+5. bulk-read once at the end.
 
-This choice is important because external live streaming does not scale to the aggregate
-internal state bandwidth of SpiNNaker.
+Do **not** implement the model as `run -> get_data -> host compute -> inject -> run` for every generation step.  Do not stream membrane voltages, H/g matrices or layer activations to the host in production timing mode.  A separate audit mode may record selected internal values for one or a few samples.
 
----
+This is essential because the external Ethernet / remote-board path can dominate wall time even when the ARM cores themselves are fast.
 
-## First mapping target
+## 4. First validation target
 
-The first target is a **teacher-forced resident trajectory**, followed by autonomous
-MaskGIT generation.
+Start with a **teacher-forced resident trajectory**.  The full monotonic canvas trajectory is uploaded once.  The board computes every layer, dynamic feature map, H/g write/read, selective alpha and output logits without host feedback.  Only compact logits/checksums/profiling information are returned once.
 
-Teacher-forced validation is deliberately first because it isolates the numerical
-mapping from on-chip categorical sampling.  The host uploads the full monotonic canvas
-trajectory at the start; the board computes every layer, every attention read/write,
-selective alpha, and output logits without host intervention.  A small set of logits
-and state checksums is read back once.
+After this passes, add the autonomous MaskGIT sampling controller on chip.  This ordering separates numerical mapping errors from categorical sampling / RNG differences.
 
-After this passes, the same resident kernel can add the MaskGIT sampling controller.
+## 5. Mathematical contract
 
-This is full-model inference validation.  It is not yet a claim of on-chip learning.
-On-chip training is a separate stage because it requires an explicit local learning
-rule and weight-update representation.
-
----
-
-## Mathematical contract
-
-For a head, normalized linear attention is
+For one head:
 
     H = sum_i phi(k_i) v_i^T
     g = sum_i phi(k_i)
     y_j = phi(q_j)^T H / (phi(q_j)^T g + eps)
 
-For the persistent first block,
+For the persistent first block:
 
     Hp_t = alpha_t Hp_{t-1} + newly_committed_writes_t
     gp_t = alpha_t gp_{t-1} + newly_committed_key_features_t
 
-and current masked tokens contribute a non-decayed transient Hm/gm.
+Current masked tokens contribute a non-decayed transient Hm/gm.  `alpha_t` must be applied synchronously to both Hp and gp.  Never decay H without g.
 
-`alpha_t` is applied synchronously to both Hp and gp.  Never decay H without g.
+The current generation contract is monotonic reveal.  A committed token is not re-masked.  If this changes later, the cache/write rule must be replaced by explicit replacement or delta semantics.
 
-The generation trajectory is monotonic.  A committed token is not re-masked.  If that
-contract changes later, the resident cache must be replaced by explicit replacement or
-delta semantics.
+## 6. Runtime audit: what is actually likely to dominate
 
----
+A rough MAC-like accounting for the present dense channel dimensions shows that attention state is not necessarily the largest cost.  For one 49-token block, approximate dominant terms are:
 
-## Hardware optimization already identified
+    Q/K/V/out projections     ~3.21 M MAC
+    two-layer FFN             ~6.42 M MAC
+    Q/K random-feature proj   ~1.61 M MAC
+    H/g build + read          ~1.63 M MAC-equivalent
 
-### 1. Cache all block-1 Q/K/V/phi states across the monotonic reveal trajectory
+Thus the conventional FFN and dense projections remain major costs.  The full four-block, ten-round model is on the order of several hundred million MAC-like operations before counting LayerNorm/GELU/Izh updates.  Therefore H2 profiling must not assume that the H/g attention core is the bottleneck.  It may reveal that dense channel mixing is the next part that needs dynamical/event conversion.
 
-The original H1 sparse code avoids K/V evaluation for already committed tokens, but it
-still recomputes Q for all 49 tokens each round and K/V for all still-masked tokens.
-That is unnecessary in block 1 because its input is only
+## 7. Block-1 resident cache audit
 
-    token embedding + position embedding + class embedding.
+A mathematically valid optimization was identified because the input to block 1 is only token + position + class embedding.  Under monotonic reveal each position changes at most once:
 
-A masked position is unchanged until reveal; after reveal its committed embedding is
-also unchanged.  Therefore a position changes at most once:
+    MASK -> committed token.
 
-    MASK state -> committed token state.
+Therefore repeated Q/K/V projection and repeated 6-ms Izh feature evaluation can in principle be cached.  The audit found the following operation-count reduction for block-1 projection/feature evaluations over ten rounds:
 
-H2 maintains a resident masked contribution Hm/gm and cached phi(Q).  When a token is
-revealed, its old masked contribution is subtracted once, the real token Q/K/V/phi is
-evaluated once, and the committed write is added to Hp/gp.  This removes repeated
-feature dynamics and projection work without changing the model equation.
+    Q evaluations:       -80%
+    K/V evaluations:     -66.7%
+    combined Q + K/V:    -75%
 
-`h2_block1_cache_audit.py` is the required FP32 equivalence gate for this optimization.
-Do not port the cache to hardware if that audit fails.
+However, changing PyTorch GEMM batch shapes produced a small floating-point difference even though the algebra is unchanged.  The best current audit reached roughly:
 
-### 2. Keep H/g sharded by attention head
+    max relative L2 ~2.7e-5
+    max absolute logit difference ~2.3e-3
 
-For the current dimensions, one full persistent H tensor contains
+This is tiny relative to the eventual fixed-point mapping error, but it failed the deliberately strict original FP32 gate.  Therefore the **canonical first H2 hardware bundle does not enable this cache**.  It keeps the already validated H1 sparse semantics.  `h2_block1_cache_audit.py` remains an optional performance optimization to reconsider after the baseline hardware mapping is stable.
 
-    4 * 128 * 32 = 16384 real values.
+Do not claim the cache as a zero-error optimization in the manuscript unless the numerical contract is explicitly relaxed and justified.
 
-A SpiNNaker-1 core has only 64 KiB DTCM, so the full tensor plus code/scratch is not a
-sensible one-core resident object.  Per-head H contains only 4096 values and is a natural
-shard.  This also matches the four attention heads and avoids unnecessary head-to-head
-communication.
+## 8. Memory / mapping strategy
 
-### 3. Store large weights in chip SDRAM and DMA tiles into DTCM
+The complete persistent H state is
 
-The whole trained network is small relative to a chip's SDRAM but too large for local
-DTCM.  Weight matrices should be uploaded once and then tiled through DMA.  Repeated
-host uploads during a run are forbidden in the production mapping.
+    4 * 128 * 32 = 16384 values.
 
-### 4. Prefer one-chip-resident sample pipelines before cross-chip model partitioning
+At 32-bit representation this is about 64 KiB before code or scratch space, so it is not a sensible single-core DTCM object on SpiNNaker-1.  Per-head H is 4096 values and is a natural later multi-core shard.
 
-The present model is small enough that its weights and state comfortably fit in one
-chip's SDRAM.  A good first H2 implementation therefore uses the application cores of
-one chip cooperatively for one sample/trajectory, reusing the same cores across layers.
-This minimizes inter-chip traffic and gives a clean single-chip compute baseline.
-After that, replicate samples across chips and only then study model partitioning when
-the model itself grows beyond one-chip capacity.
+The whole trained network is only a few MB at 32-bit precision, so the current model comfortably fits chip SDRAM.  Large weights should therefore live in SDRAM and be DMA-tiled into DTCM.  They should not be repeatedly uploaded from the host.
 
----
+For correctness, the first custom kernel may be a serial resident baseline.  After it passes, the preferred performance mapping is a one-chip cooperative pipeline before any cross-chip model partitioning.  This isolates compute/DMA cost from router and inter-chip cost.
 
-## Fixed-point requirement
+## 9. Fixed-point is a mandatory mapping gate
 
-The cloud reference is FP32 PyTorch.  SpiNNaker-1 ARM968 cores do not have hardware
-floating point.  Therefore a full resident mapping should not silently rely on software
-float and then report the resulting runtime as representative.
+The cloud reference is FP32 PyTorch.  SpiNNaker-1 ARM968 cores do not provide hardware floating point suitable for treating software float as the representative high-performance path.  H2 therefore needs a fixed-point preflight before performance claims.
 
-The first deployment should use SpiNNaker fixed-point arithmetic (or an explicitly
-profiled equivalent) and must run a **fixed-point preflight audit** before hardware claims
-are made.  The audit must compare:
+The fixed-point audit must separately compare:
 
 - fresh logits;
 - persistent trajectory logits;
 - alpha values;
-- H/g checksums or selected entries;
+- selected H/g entries or checksums;
 - final token decisions.
 
-Quantization is a hardware mapping approximation and must be separated from the already
-validated Izh feature-map approximation.
+The B2.1 Izh decoder, especially some K-side decoders with larger alternating coefficients, may be sensitive to fixed-point cancellation.  If necessary, recalibrate the decoder directly under the chosen fixed-point arithmetic rather than blindly copying the FP32 decoder coefficients.
 
----
+## 10. Communication modes
 
-## Communication modes
+`profile` mode returns only final token/logit summaries, stage cycle counters, DMA-byte counters, packet/provenance counters, memory high-water marks and error flags.  No internal trajectory streaming is allowed.
 
-### `profile`
+`audit` mode is for one or a few samples and may additionally return selected layer states/checksums.  Its communication time must never be reported as production inference timing.
 
-Production timing mode.  Read back only:
+## 11. Files in this hand-off
 
-- final tokens / selected logits;
-- per-stage cycle counters;
-- DMA bytes;
-- multicast packet counters;
-- router/provenance counters;
-- memory high-water marks;
-- error/status flags.
+- `h2_block1_cache_audit.py` — optional runtime optimization audit; currently not canonical.
+- `export_h2_resident_bundle.py` — exports the frozen B2.1 model, calibration and deterministic teacher trajectory into one self-contained bundle.  Default export uses the validated H1 sparse block-1 path.
+- `resident_vertex.py` — custom GraphFrontEnd data-spec / recording interface for a one-upload, one-read resident application.
+- `run_h2_resident.py` — host launcher; setup once, run once, bulk-read once.
+- `c_src/h2_resident.aplx` — **not yet supplied**.  The on-chip C kernel must be compiled after Codex inspects the exact campus SpiNNaker toolchain/API version.  Do not fabricate compatibility before that environment is visible.
 
-No per-step membrane/state recording.
+The missing `.aplx` is deliberate: the mathematical reference and host communication contract are frozen here, while the hardware-specific C implementation is the next Codex task inside WSL.  The launcher fails explicitly if the binary is absent.
 
-### `audit`
+## 12. Required sequence after WSL obtains campus access
 
-One or a few samples only.  Additionally record selected states at predefined checkpoints
-for comparison with the software reference.  Never use audit-mode communication numbers
-as production performance measurements.
+1. Inspect exact installed `sPyNNaker`, `SpiNNakerGraphFrontEnd`, `spinnaker_tools`, compiler and machine-allocation versions.
+2. Re-run the existing minimal campus connectivity test.
+3. Compile/run an official trivial custom GraphFrontEnd application to verify local `.aplx` toolchain compatibility.
+4. Run the canonical H2 bundle exporter and freeze its SHA256 manifest.
+5. Implement the resident C kernel against the frozen mathematical contract.
+6. Perform fixed-point preflight locally and, if needed, fixed-point-aware Izh decoder recalibration.
+7. Run one sample/trajectory in `audit` mode and compare checkpoints with the reference bundle.
+8. Run batches in `profile` mode with no live state streaming.
+9. Only after functional equivalence passes, parallelize within a chip and begin scaling sweeps.
 
----
-
-## Files
-
-- `h2_block1_cache_audit.py` — exact cloud audit for the first runtime optimization.
-- `export_h2_resident_bundle.py` — creates a self-contained hardware input bundle from
-  the frozen H1-B checkpoint and B2.1 calibration.
-- `resident_vertex.py` — GraphFrontEnd vertex/data-spec interface used to upload one
-  resident bundle and bulk-read one result block.
-- `run_h2_resident.py` — host launcher.  It allocates once, runs once, reads once.
-- `c_src/` — on-chip resident kernel to be compiled to `h2_resident.aplx` after the WSL
-  SpiNNaker development environment is available.
-
-The Python-side code intentionally isolates site/machine configuration from the model
-math.  Codex should adapt only the allocation/build details after inspecting the actual
-campus SpiNNaker environment; it should not redesign the mathematical contract merely to
-make an API example easier.
-
----
-
-## Required sequence once WSL has campus access
-
-1. Confirm the installed sPyNNaker / SpiNNakerGraphFrontEnd / spinnaker_tools versions.
-2. Run the existing minimal SpiNNaker connectivity test without changing this package.
-3. Build a trivial custom GraphFrontEnd application to confirm local `.aplx` compilation.
-4. Run the H2 fixed-point/reference preflight locally.
-5. Compile `h2_resident.aplx`.
-6. Run one sample in `audit` mode and compare against frozen software checkpoints.
-7. Run a batch in `profile` mode with no live state streaming.
-8. Only after functional equivalence passes, sweep chips/cores/model dimensions for scaling.
-
-Do not jump directly to multi-board scaling before the resident single-chip accounting is
-understood.
+The central rule is: first establish a resident, auditable single-chip baseline; then let measured compute/DMA/routing costs determine the next architecture optimization.
