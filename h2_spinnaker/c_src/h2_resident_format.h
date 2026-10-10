@@ -20,6 +20,10 @@ typedef enum {
 #define H2_MAX_DECODER 32u
 #define H2_CALIB_RECORDS 8u
 
+#define H2_FLAG_MONOTONIC      (1u << 0)
+#define H2_FLAG_RESIDENT_CACHE (1u << 1)
+#define H2_FLAG_AUDIT_MODE     (1u << 2)
+
 /* 16 words written by resident_vertex.py. */
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -51,7 +55,7 @@ typedef struct __attribute__((packed)) {
     float decoder_ref[H2_MAX_DECODER];
 } h2_calib_record_f32_t;
 
-/* Compact profiling record returned in profile mode.  Extend only by versioning. */
+/* Compact profiling record returned in profile mode. Extend only by versioning. */
 typedef struct __attribute__((packed)) {
     uint32_t status;
     uint32_t version;
