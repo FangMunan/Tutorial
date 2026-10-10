@@ -1,0 +1,64 @@
+name: H4 SNN-Transform MaskGIT-28 Quality
+
+on:
+  push:
+    branches:
+      - h4-maskgit28-quality-20261010
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy matplotlib scikit-learn
+          python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+      - name: Smoke H4 joint trajectory path
+        run: |
+          python h3_maskgit28/train_snn_transform_maskgit28_h4.py \
+            --out H4_SMOKE --smoke --threads 4 | tee H4_SMOKE.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: H4_SMOKE
+          path: |
+            H4_SMOKE
+            H4_SMOKE.log
+          retention-days: 7
+
+  full:
+    needs: smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy matplotlib scikit-learn
+          python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+      - name: Capacity-matched conditional backbone plus joint trajectory training
+        run: |
+          python h3_maskgit28/train_snn_transform_maskgit28_h4.py \
+            --out H4_MASKGIT28_QUALITY \
+            --epochs 30 --n-per-class 2000 --batch 64 \
+            --d 128 --layers 4 --heads 4 --ff 512 --features 128 \
+            --joint-epochs 4 --joint-batch 16 --joint-steps 6 --joint-lr 5e-5 \
+            --decode-steps 24 --choice-temperature 4.5 --ngen 300 \
+            --threads 4 --seed 7 | tee H4_MASKGIT28_QUALITY.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: H4_MASKGIT28_QUALITY_RESULTS
+          path: |
+            H4_MASKGIT28_QUALITY
+            H4_MASKGIT28_QUALITY.log
+          retention-days: 30
