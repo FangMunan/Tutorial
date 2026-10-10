@@ -33,13 +33,16 @@ jobs:
         run: |
           python -m py_compile h2_spinnaker/h2_block1_cache_audit.py
       - name: Run audit
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p h2_spinnaker/run/H2_CACHE_AUDIT
           python h2_spinnaker/h2_block1_cache_audit.py \
             --h1b h2_spinnaker/reuse/H1B \
             --b21 h2_spinnaker/reuse/B21 \
             --out h2_spinnaker/run/H2_CACHE_AUDIT | tee h2_spinnaker/run/H2_CACHE_AUDIT/run.log
       - name: Upload audit
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: H2_CACHE_AUDIT
