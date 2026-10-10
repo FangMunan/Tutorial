@@ -29,7 +29,7 @@ jobs:
           cp .github/workflows/h2_bundle_export.yml "$ROOT/workflows/"
           cp .github/workflows/h2_cache_audit.yml "$ROOT/workflows/"
 
-          gh run download 38046954759 \
+          gh run download 38047267959 \
             --repo FangMunan/Tutorial \
             --name H2_RESIDENT_BUNDLE \
             --dir "$ROOT/model_bundle"
@@ -38,15 +38,16 @@ jobs:
           H2 SPINNAKER HANDOFF — START HERE
 
           1. Read h2_spinnaker/README_H2_SPINNAKER_MAPPING.md.
-          2. model_bundle/ is the canonical validated-H1-sparse software reference bundle.
+          2. model_bundle/ is the canonical validated-H1-sparse H2_RESIDENT_BUNDLE_V2 reference bundle.
           3. h2_spinnaker/run_h2_resident.py is the intended one-upload / one-run / one-read host launcher.
-          4. h2_spinnaker/resident_vertex.py defines the GraphFrontEnd data regions and recording interface.
-          5. h2_spinnaker/c_src/h2_resident_format.h freezes the host/kernel binary interface.
-          6. h2_spinnaker/c_src/README_KERNEL_CONTRACT.md defines the on-chip kernel mathematics and profiling contract.
-          7. h2_resident.aplx is intentionally NOT included. Build the C kernel only after inspecting the exact campus WSL SpiNNaker toolchain/API version.
-          8. Immediate H2 is full-board inference / resident trajectory validation, not yet on-chip training.
-          9. Do not introduce per-generation-step host callbacks in the performance implementation.
-          10. First pass teacher-forced resident correctness; then autonomous on-chip MaskGIT; then one-chip scaling.
+          4. h2_spinnaker/resident_vertex.py defines data regions plus audit/profile communication modes.
+          5. model_bundle/model_layout_generated.h freezes model tensor offsets for the C kernel.
+          6. h2_spinnaker/c_src/h2_resident_format.h freezes the host/kernel binary interface.
+          7. h2_spinnaker/c_src/README_KERNEL_CONTRACT.md defines the on-chip kernel mathematics and profiling contract.
+          8. h2_resident.aplx is intentionally NOT included. Build the C kernel only after inspecting the exact campus WSL SpiNNaker toolchain/API version.
+          9. Immediate H2 is full-board inference / resident trajectory validation, not yet on-chip training.
+          10. Do not introduce per-generation-step host callbacks in the performance implementation.
+          11. First pass teacher-forced resident correctness; then autonomous on-chip MaskGIT; then one-chip scaling.
           TXT
 
           find "$ROOT" -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > "$ROOT/SHA256SUMS.txt"
