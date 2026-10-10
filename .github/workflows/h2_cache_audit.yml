@@ -3,6 +3,9 @@ name: H2 Resident Cache Audit
 on:
   push:
     branches: [h2-resident-mapping-prep-20261010]
+    paths:
+      - 'h2_spinnaker/h2_block1_cache_audit.py'
+      - '.github/workflows/h2_cache_audit.yml'
   workflow_dispatch:
 
 jobs:
