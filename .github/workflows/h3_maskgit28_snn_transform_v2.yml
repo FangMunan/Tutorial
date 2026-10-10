@@ -1,0 +1,65 @@
+name: H3 SNN-Transform MaskGIT-28 V2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [h3-maskgit28-snn-transform-v2-20261010]
+    paths:
+      - 'h3_maskgit28/train_snn_transform_maskgit28_v2.py'
+      - '.github/workflows/h3_maskgit28_snn_transform_v2.yml'
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy matplotlib scikit-learn torch torchvision
+      - name: Smoke initialized model
+        run: |
+          python h3_maskgit28/train_snn_transform_maskgit28_v2.py \
+            --smoke --out H3_V2_SMOKE --threads 4 | tee H3_V2_SMOKE.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: H3_V2_SMOKE
+          path: |
+            H3_V2_SMOKE
+            H3_V2_SMOKE.log
+          retention-days: 30
+
+  full:
+    needs: smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy matplotlib scikit-learn torch torchvision
+      - name: Formal software training and image generation
+        run: |
+          python h3_maskgit28/train_snn_transform_maskgit28_v2.py \
+            --out H3_MASKGIT28_SNN_V2 \
+            --epochs 60 --n-per-class 2000 --batch 96 \
+            --d 64 --layers 4 --heads 4 --ff 256 --features 64 \
+            --gate-epochs 3 --gate-batch 64 --gate-steps 6 \
+            --decode-steps 24 --choice-temperature 4.5 --ngen 128 \
+            --threads 4 --seed 7 | tee H3_MASKGIT28_SNN_V2.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: H3_MASKGIT28_SNN_V2_RESULTS
+          path: |
+            H3_MASKGIT28_SNN_V2
+            H3_MASKGIT28_SNN_V2.log
+          retention-days: 30
