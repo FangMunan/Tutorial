@@ -4,12 +4,12 @@
 
 The vertex is intentionally coarse-grained: model + calibration + all trajectory inputs
 are written to SDRAM once, `h2_resident.aplx` executes without host callbacks, and one
-recording block is read at the end.  This is the communication pattern we want to
-benchmark before introducing multi-core partitioning.
+recording block is read at the end.  Production `profile` mode keeps the return buffer
+small; `audit` mode permits selected internal checkpoints for correctness work.
 
-The class follows the current SpiNNakerGraphFrontEnd custom-application pattern.  Campus
-software may expose a slightly older API; if so, Codex should adapt imports / method
-signatures while preserving the memory-region and one-upload/one-read contract.
+Campus software may expose a slightly older API.  Codex should adapt imports / method
+signatures after inspecting WSL while preserving the memory-region and one-upload /
+one-read contract.
 """
 from __future__ import annotations
 
@@ -24,7 +24,6 @@ from pacman.model.placements import Placement
 from pacman.model.resources import VariableSDRAM
 
 from spinn_front_end_common.abstract_models import AbstractGeneratesDataSpecification
-from spinn_front_end_common.data import FecDataView
 from spinn_front_end_common.interface.buffer_management import recording_utilities
 from spinn_front_end_common.interface.buffer_management.buffer_models import AbstractReceiveBuffersToHost
 from spinn_front_end_common.interface.ds import DataSpecificationGenerator
@@ -48,6 +47,11 @@ class Channels(IntEnum):
     RESULT = 0
 
 
+FLAG_MONOTONIC = 1 << 0
+FLAG_RESIDENT_CACHE = 1 << 1
+FLAG_AUDIT_MODE = 1 << 2
+
+
 def _pad4(raw: bytes) -> bytes:
     r = len(raw) % 4
     return raw if r == 0 else raw + b"\x00" * (4 - r)
@@ -60,18 +64,18 @@ def _as_u32(raw: bytes) -> np.ndarray:
 class H2ResidentVertex(
         SimulatorVertex, AbstractGeneratesDataSpecification,
         AbstractReceiveBuffersToHost):
-    """One-core resident correctness baseline.
-
-    Multi-core parallelization is intentionally deferred until this serial resident
-    baseline passes numerical equivalence and exposes the real compute / DMA profile.
-    """
+    """One-core resident correctness baseline before one-chip parallelization."""
 
     PARAM_WORDS = 16
     PARAM_BYTES = PARAM_WORDS * BYTES_PER_WORD
 
-    def __init__(self, bundle_dir: Path, *, output_bytes: int = 262144,
-                 profile_bytes: int = 4096, label: str = "H2 resident"):
+    def __init__(self, bundle_dir: Path, *, mode: str = "audit",
+                 output_bytes: int | None = None, profile_bytes: int = 4096,
+                 label: str = "H2 resident"):
         super().__init__(label, "h2_resident.aplx")
+        if mode not in {"audit", "profile"}:
+            raise ValueError("mode must be 'audit' or 'profile'")
+        self.mode = mode
         self.bundle_dir = Path(bundle_dir)
         self.manifest = json.loads((self.bundle_dir / "manifest.json").read_text())
         self.model = (self.bundle_dir / self.manifest["tensor_image"]["file"]).read_bytes()
@@ -81,8 +85,15 @@ class H2ResidentVertex(
         ti = self.manifest["teacher_input"]
         self.labels = (self.bundle_dir / ti["labels_file"]).read_bytes()
         self.canvases = (self.bundle_dir / ti["canvases_file"]).read_bytes()
+        if output_bytes is None:
+            output_bytes = 262144 if mode == "audit" else 4096
         self.output_bytes = int(output_bytes)
         self.profile_bytes = int(profile_bytes)
+
+    @property
+    def payload_bytes(self) -> int:
+        """Application payload copied host->board, excluding front-end system regions."""
+        return len(self.model) + len(self.calibration) + len(self.labels) + len(self.canvases)
 
     @property
     @overrides(MachineVertex.sdram_required)
@@ -96,7 +107,6 @@ class H2ResidentVertex(
             + len(_pad4(self.labels))
             + len(_pad4(self.canvases))
         )
-        # Recording storage is per-run variable SDRAM.
         return VariableSDRAM(fixed, self.output_bytes + self.profile_bytes)
 
     @overrides(AbstractGeneratesDataSpecification.generate_data_specification)
@@ -114,9 +124,15 @@ class H2ResidentVertex(
             [self.output_bytes + self.profile_bytes])
 
         arch = self.manifest["architecture"]
+        contracts = self.manifest["contracts"]
         flags = 0
-        flags |= 1 if self.manifest["contracts"].get("monotonic_reveal") else 0
-        flags |= 2 if self.manifest["contracts"].get("block1_projection_feature_cache") else 0
+        if contracts.get("monotonic_reveal"):
+            flags |= FLAG_MONOTONIC
+        if contracts.get("block1_execution") == "experimental_resident_cache":
+            flags |= FLAG_RESIDENT_CACHE
+        if self.mode == "audit":
+            flags |= FLAG_AUDIT_MODE
+
         params = np.asarray([
             0x48325231,  # 'H2R1'
             1,
@@ -136,19 +152,15 @@ class H2ResidentVertex(
             flags,
         ], dtype="<u4")
 
-        spec.switch_write_focus(DataRegions.PARAMS)
-        spec.write_array(params)
-        spec.switch_write_focus(DataRegions.MODEL)
-        spec.write_array(_as_u32(self.model))
+        spec.switch_write_focus(DataRegions.PARAMS); spec.write_array(params)
+        spec.switch_write_focus(DataRegions.MODEL); spec.write_array(_as_u32(self.model))
         spec.switch_write_focus(DataRegions.CALIBRATION)
         if self.calibration:
             spec.write_array(_as_u32(self.calibration))
         else:
             spec.write_value(0)
-        spec.switch_write_focus(DataRegions.LABELS)
-        spec.write_array(_as_u32(self.labels))
-        spec.switch_write_focus(DataRegions.CANVASES)
-        spec.write_array(_as_u32(self.canvases))
+        spec.switch_write_focus(DataRegions.LABELS); spec.write_array(_as_u32(self.labels))
+        spec.switch_write_focus(DataRegions.CANVASES); spec.write_array(_as_u32(self.canvases))
         spec.end_specification()
 
     def read_result(self) -> bytes:
