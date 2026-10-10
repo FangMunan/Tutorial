@@ -1,0 +1,39 @@
+name: H3 SNN-Transform MaskGIT-28 V3
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [h3-maskgit28-snn-transform-v3-20261010]
+    paths:
+      - '.github/workflows/h3_maskgit28_snn_transform_v3.yml'
+
+jobs:
+  full:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy matplotlib scikit-learn torch torchvision
+      - name: Train SNN-Transform MaskGIT-28
+        run: |
+          python h3_maskgit28/train_snn_transform_maskgit28_v2.py \
+            --out H3_MASKGIT28_SNN_V3 \
+            --epochs 40 --n-per-class 2000 --batch 96 \
+            --d 64 --layers 4 --heads 4 --ff 256 --features 32 \
+            --gate-epochs 2 --gate-batch 64 --gate-steps 6 \
+            --decode-steps 24 --choice-temperature 4.5 --ngen 128 \
+            --threads 4 --seed 7 | tee H3_MASKGIT28_SNN_V3.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: H3_MASKGIT28_SNN_V3_RESULTS
+          path: |
+            H3_MASKGIT28_SNN_V3
+            H3_MASKGIT28_SNN_V3.log
+          retention-days: 30
