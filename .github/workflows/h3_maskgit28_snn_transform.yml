@@ -1,0 +1,67 @@
+name: H3 SNN-Transform MaskGIT-28
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [h3-maskgit28-snn-transform-20261010]
+    paths:
+      - 'h3_maskgit28/**'
+      - '.github/workflows/h3_maskgit28_snn_transform.yml'
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy matplotlib scikit-learn torch torchvision
+      - name: Compile
+        run: python -m py_compile h3_maskgit28/train_snn_transform_maskgit28.py h1_cloud/h0_base.py
+      - name: Smoke train and generate
+        run: |
+          python h3_maskgit28/train_snn_transform_maskgit28.py \
+            --smoke --out H3_SMOKE --threads 4 | tee H3_SMOKE.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: H3_MASKGIT28_SNN_SMOKE
+          path: |
+            H3_SMOKE
+            H3_SMOKE.log
+          retention-days: 30
+
+  full:
+    needs: smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy matplotlib scikit-learn torch torchvision
+      - name: Full MNIST-012 training and image generation
+        run: |
+          python h3_maskgit28/train_snn_transform_maskgit28.py \
+            --out H3_MASKGIT28_SNN \
+            --epochs 36 --batch 96 \
+            --d 128 --layers 4 --heads 4 --ff 512 --features 128 \
+            --gate-epochs 2 --gate-batch 64 --gate-steps 6 \
+            --decode-steps 24 --choice-temperature 4.5 --ngen 128 \
+            --threads 4 --seed 7 | tee H3_MASKGIT28_SNN.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: H3_MASKGIT28_SNN_RESULTS
+          path: |
+            H3_MASKGIT28_SNN
+            H3_MASKGIT28_SNN.log
+          retention-days: 30
