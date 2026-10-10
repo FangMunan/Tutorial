@@ -1,0 +1,60 @@
+name: H2 SpiNNaker Handoff Package
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [h2-resident-mapping-prep-20261010]
+    paths:
+      - '.github/workflows/h2_handoff_package.yml'
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble source package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ROOT=H2_SPINNAKER_HANDOFF_20261010
+          mkdir -p "$ROOT/h1_cloud" "$ROOT/model_bundle" "$ROOT/workflows"
+
+          cp -a h2_spinnaker "$ROOT/"
+          cp h1_cloud/h0_base.py "$ROOT/h1_cloud/"
+          cp h1_cloud/h1_sparse_fusion.py "$ROOT/h1_cloud/"
+          cp h1_cloud/h1b_izh_fusion.py "$ROOT/h1_cloud/"
+          cp h1_cloud/h1b2_error_localization.py "$ROOT/h1_cloud/"
+          cp h1_cloud/h1b21_qk_layer_scan.py "$ROOT/h1_cloud/"
+          cp .github/workflows/h2_bundle_export.yml "$ROOT/workflows/"
+          cp .github/workflows/h2_cache_audit.yml "$ROOT/workflows/"
+
+          gh run download 38046954759 \
+            --repo FangMunan/Tutorial \
+            --name H2_RESIDENT_BUNDLE \
+            --dir "$ROOT/model_bundle"
+
+          cat > "$ROOT/START_HERE.txt" <<'TXT'
+          H2 SPIINNAKER HANDOFF — START HERE
+
+          1. Read h2_spinnaker/README_H2_SPINNAKER_MAPPING.md.
+          2. The model_bundle/ directory is the canonical validated-H1-sparse software reference bundle.
+          3. h2_spinnaker/run_h2_resident.py is the intended one-upload / one-run / one-read host launcher.
+          4. h2_spinnaker/resident_vertex.py defines the GraphFrontEnd data regions and recording interface.
+          5. h2_spinnaker/c_src/h2_resident_format.h freezes the host/kernel binary interface.
+          6. h2_spinnaker/c_src/README_KERNEL_CONTRACT.md defines the on-chip kernel mathematics and profiling contract.
+          7. h2_resident.aplx is intentionally NOT included. Build the C kernel only after inspecting the exact campus WSL SpiNNaker toolchain/API version.
+          8. Immediate H2 is full-board inference / resident trajectory validation, not yet on-chip training.
+          9. Do not introduce per-generation-step host callbacks in the performance implementation.
+          10. First pass teacher-forced resident correctness; then autonomous on-chip MaskGIT; then one-chip scaling.
+          TXT
+
+          find "$ROOT" -type f -print0 | sort -z | xargs -0 sha256sum > "$ROOT/SHA256SUMS.txt"
+          zip -qr H2_SPINNAKER_HANDOFF_20261010.zip "$ROOT"
+          sha256sum H2_SPINNAKER_HANDOFF_20261010.zip
+      - name: Upload handoff package
+        uses: actions/upload-artifact@v4
+        with:
+          name: H2_SPINNAKER_HANDOFF_20261010
+          path: H2_SPINNAKER_HANDOFF_20261010.zip
+          retention-days: 30
