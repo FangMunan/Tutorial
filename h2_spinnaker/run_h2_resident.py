@@ -5,15 +5,14 @@
 Communication contract:
     setup once -> upload bundle once -> run complete trajectory once -> bulk read once.
 
-No stepwise host feedback is allowed in this launcher.  That makes wall-clock timing
-interpretable and prevents Ethernet / remote-board latency from masquerading as model
-compute time.
+No stepwise host feedback is allowed.  Host wall-clock timing is kept separate from
+on-chip cycle counters because campus Ethernet / front-end overhead can dominate a fast
+resident kernel.
 """
 from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 from time import perf_counter
 
@@ -26,9 +25,12 @@ from resident_vertex import H2ResidentVertex
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bundle", type=Path, required=True)
-    ap.add_argument("--binary-folder", type=Path, default=Path(__file__).resolve().parent / "c_src")
+    ap.add_argument("--binary-folder", type=Path,
+                    default=Path(__file__).resolve().parent / "c_src")
     ap.add_argument("--out", type=Path, default=Path("H2_SPINNAKER_RUN"))
-    ap.add_argument("--output-bytes", type=int, default=262144)
+    ap.add_argument("--mode", choices=("audit", "profile"), default="audit")
+    ap.add_argument("--output-bytes", type=int, default=None,
+                    help="Override result-buffer bytes; profile defaults small")
     ap.add_argument("--profile-bytes", type=int, default=4096)
     ap.add_argument("--n-chips", type=int, default=1)
     args = ap.parse_args()
@@ -40,43 +42,56 @@ def main():
             f"Missing {aplx}. Build c_src after entering the campus SpiNNaker toolchain."
         )
 
-    timing = {}
+    timing = {"mode": args.mode}
     t0 = perf_counter()
-    front_end.setup(
-        n_chips_required=args.n_chips,
-        model_binary_folder=str(args.binary_folder.resolve()),
-    )
-    timing["frontend_setup_s"] = perf_counter() - t0
+    stopped = False
+    try:
+        ts = perf_counter()
+        front_end.setup(
+            n_chips_required=args.n_chips,
+            model_binary_folder=str(args.binary_folder.resolve()),
+        )
+        timing["frontend_setup_s"] = perf_counter() - ts
 
-    vertex = H2ResidentVertex(
-        args.bundle,
-        output_bytes=args.output_bytes,
-        profile_bytes=args.profile_bytes,
-    )
-    front_end.add_machine_vertex_instance(vertex)
+        vertex = H2ResidentVertex(
+            args.bundle,
+            mode=args.mode,
+            output_bytes=args.output_bytes,
+            profile_bytes=args.profile_bytes,
+        )
+        timing["application_payload_bytes_host_to_board"] = vertex.payload_bytes
+        timing["requested_result_capacity_bytes"] = vertex.output_bytes + vertex.profile_bytes
+        front_end.add_machine_vertex_instance(vertex)
 
-    # This single call includes mapping/data loading plus resident execution.  On-chip
-    # cycle counters in the result must be used to separate compute from front-end cost.
-    t1 = perf_counter()
-    front_end.run_until_complete(1)
-    timing["run_call_wall_s"] = perf_counter() - t1
+        # This call includes graph mapping/data loading and resident execution.  The C
+        # kernel's cycle counters are the authoritative on-chip compute measurement.
+        tr = perf_counter()
+        front_end.run_until_complete(1)
+        timing["run_call_wall_s"] = perf_counter() - tr
 
-    placements = [p for p in FecDataView.iterate_placemements() if p.vertex is vertex]
-    timing["placement"] = None if not placements else {
-        "x": placements[0].x, "y": placements[0].y, "p": placements[0].p
-    }
+        placement = FecDataView.get_placement_of_vertex(vertex)
+        timing["placement"] = {
+            "x": placement.x, "y": placement.y, "p": placement.p
+        }
 
-    t2 = perf_counter()
-    raw = vertex.read_result()
-    timing["bulk_read_s"] = perf_counter() - t2
-    (args.out / "result.bin").write_bytes(raw)
+        tb = perf_counter()
+        raw = vertex.read_result()
+        timing["bulk_read_s"] = perf_counter() - tb
+        timing["result_bytes_received"] = len(raw)
+        (args.out / "result.bin").write_bytes(raw)
 
-    t3 = perf_counter()
-    front_end.stop()
-    timing["frontend_stop_s"] = perf_counter() - t3
+        te = perf_counter()
+        front_end.stop()
+        stopped = True
+        timing["frontend_stop_s"] = perf_counter() - te
+    finally:
+        if not stopped:
+            try:
+                front_end.stop()
+            except Exception:
+                pass
+
     timing["total_host_wall_s"] = perf_counter() - t0
-    timing["result_bytes"] = len(raw)
-
     (args.out / "host_timing.json").write_text(json.dumps(timing, indent=2))
     print(json.dumps(timing, indent=2), flush=True)
 
