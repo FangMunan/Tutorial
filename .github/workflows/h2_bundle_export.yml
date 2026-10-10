@@ -36,8 +36,10 @@ jobs:
         run: |
           python -m py_compile h2_spinnaker/export_h2_resident_bundle.py h2_spinnaker/h2_block1_cache_audit.py
       - name: Export canonical validated-H1-sparse bundle
+        shell: bash
         run: |
           set -euo pipefail
+          mkdir -p h2_spinnaker/run/H2_RESIDENT_BUNDLE
           python h2_spinnaker/export_h2_resident_bundle.py \
             --h1b h2_spinnaker/reuse/H1B \
             --b21 h2_spinnaker/reuse/B21 \
