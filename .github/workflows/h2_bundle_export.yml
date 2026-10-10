@@ -1,0 +1,51 @@
+name: H2 Canonical Resident Bundle
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [h2-resident-mapping-prep-20261010]
+    paths:
+      - 'h2_spinnaker/export_h2_resident_bundle.py'
+      - '.github/workflows/h2_bundle_export.yml'
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy scikit-learn torch torchvision
+      - name: Download frozen H1-B artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p h2_spinnaker/reuse/H1B
+          gh run download 37980789193 --repo FangMunan/Tutorial --name H1B_IZH_RESULTS --dir h2_spinnaker/reuse/H1B
+      - name: Download B2.1 calibration artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p h2_spinnaker/reuse/B21
+          gh run download 37998819624 --repo FangMunan/Tutorial --name H1B21_QK_LAYER_SCAN --dir h2_spinnaker/reuse/B21
+      - name: Compile exporter
+        run: |
+          python -m py_compile h2_spinnaker/export_h2_resident_bundle.py h2_spinnaker/h2_block1_cache_audit.py
+      - name: Export canonical validated-H1-sparse bundle
+        run: |
+          set -euo pipefail
+          python h2_spinnaker/export_h2_resident_bundle.py \
+            --h1b h2_spinnaker/reuse/H1B \
+            --b21 h2_spinnaker/reuse/B21 \
+            --out h2_spinnaker/run/H2_RESIDENT_BUNDLE \
+            --batch 4 --rounds 10 | tee h2_spinnaker/run/H2_RESIDENT_BUNDLE/export.log
+      - name: Upload resident bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: H2_RESIDENT_BUNDLE
+          path: h2_spinnaker/run/H2_RESIDENT_BUNDLE
+          retention-days: 30
