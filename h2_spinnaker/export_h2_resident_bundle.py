@@ -2,14 +2,13 @@
 # -*- coding: utf-8 -*-
 """Export the frozen H2 software reference into one resident-hardware bundle.
 
-The exporter deliberately separates *model semantics* from the site-specific SpiNNaker
-launcher.  It creates a flat, aligned tensor image plus a manifest, calibration metadata,
-and deterministic teacher-forced trajectories / reference logits.  The entire bundle is
-intended to be copied to SpiNNaker SDRAM once per experiment, not streamed step-by-step.
+The exporter deliberately separates model semantics from the site-specific SpiNNaker
+launcher.  It creates a flat aligned tensor image, fixed-size Izh calibration records,
+deterministic teacher-forced trajectories, and reference logits/checksums.  Everything
+is intended to be copied to SpiNNaker SDRAM once per experiment, not streamed per step.
 
-The exported tensor image is float32 reference data.  It is NOT the final SpiNNaker-1
-numeric format.  Codex / the H2 fixed-point preflight must convert it to the selected
-fixed-point representation only after quantization equivalence has been measured.
+The tensor image is float32 *reference* data.  It is not the final SpiNNaker-1 numeric
+format; fixed-point conversion is a separate audited mapping stage.
 """
 from __future__ import annotations
 
@@ -35,6 +34,7 @@ import h1b21_qk_layer_scan as b21
 from h2_block1_cache_audit import enable_cached_block1, load_selected
 
 ALIGN = 64
+MAX_DECODER = 32
 
 
 def align(n: int, a: int = ALIGN) -> int:
@@ -50,7 +50,6 @@ def sha256(path: Path) -> str:
 
 
 def write_tensor_image(path: Path, state_dict) -> list[dict]:
-    """Write little-endian contiguous float32 tensors with 64-byte alignment."""
     manifest = []
     offset = 0
     with path.open("wb") as f:
@@ -65,30 +64,53 @@ def write_tensor_image(path: Path, state_dict) -> list[dict]:
             raw = arr.tobytes(order="C")
             f.write(raw)
             manifest.append({
-                "name": name,
-                "shape": list(arr.shape),
-                "dtype": "float32-le",
-                "offset_bytes": offset,
-                "nbytes": len(raw),
+                "name": name, "shape": list(arr.shape), "dtype": "float32-le",
+                "offset_bytes": offset, "nbytes": len(raw),
             })
             offset += len(raw)
     return manifest
 
 
+def write_calibration_binary(path: Path, selected) -> list[dict]:
+    """Eight fixed-size records, ordered layer then Q/K.
+
+    record = uint32 layer, uint32 side(0=Q,1=K), float bias, float gain,
+             uint32 window_ms, uint32 decoder_len, float decoder[32]
+    """
+    meta = []
+    with path.open("wb") as f:
+        for li in range(4):
+            for side_i, side in enumerate(("Q", "K")):
+                v = selected[(li, side)]
+                spec = v["spec"]
+                dec = v["decoder"].detach().cpu().float().numpy()
+                if len(dec) > MAX_DECODER:
+                    raise ValueError(f"decoder length {len(dec)} exceeds {MAX_DECODER}")
+                padded = np.zeros(MAX_DECODER, dtype="<f4")
+                padded[:len(dec)] = dec
+                f.write(struct.pack(
+                    "<IIffII", li, side_i, float(spec["bias"]), float(spec["gain"]),
+                    int(spec["window_ms"]), int(len(dec))))
+                f.write(padded.tobytes(order="C"))
+                meta.append({
+                    "layer": li, "side": side, "bias": float(spec["bias"]),
+                    "gain": float(spec["gain"]), "window_ms": int(spec["window_ms"]),
+                    "decoder_len": int(len(dec)),
+                })
+    return meta
+
+
 def make_teacher_trajectory(batch: int, rounds: int, seed: int, device):
-    labels, canvases = h1.make_reveal_canvases(batch, rounds, device, seed)
-    return labels, canvases
+    return h1.make_reveal_canvases(batch, rounds, device, seed)
 
 
 @torch.no_grad()
 def reference_trajectory(model, labels, canvases):
     state = None
-    logits = []
-    checks = []
+    logits, checks = [], []
     for step, cur in enumerate(canvases):
         z, state, stats = model.forward_persistent(cur, labels, state, "selective")
         logits.append(z.detach().cpu().float().numpy())
-        # Compact checksums are useful for early on-chip debugging without transferring H/g.
         hp = getattr(state, "Hp", getattr(state, "H", None))
         gp = getattr(state, "gp", getattr(state, "g", None))
         checks.append({
@@ -104,10 +126,8 @@ def reference_trajectory(model, labels, canvases):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--h1b", type=Path, required=True,
-                    help="Downloaded H1B_IZH_RESULTS artifact directory")
-    ap.add_argument("--b21", type=Path, required=True,
-                    help="Downloaded H1B21_QK_LAYER_SCAN artifact directory")
+    ap.add_argument("--h1b", type=Path, required=True)
+    ap.add_argument("--b21", type=Path, required=True)
     ap.add_argument("--out", type=Path, default=Path("H2_RESIDENT_BUNDLE"))
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--rounds", type=int, default=10)
@@ -125,7 +145,6 @@ def main():
 
     _, dense_sel, _, _ = h1b2.load_reused_models(args, device)
     selected = load_selected(args.b21 / "H1B21_RESULTS.json", device)
-
     model = copy.deepcopy(dense_sel)
     enable_cached_block1(model)
     b21.install_all_calibrated(model, selected)
@@ -133,11 +152,11 @@ def main():
 
     model_path = args.out / "model_f32.bin"
     tensor_manifest = write_tensor_image(model_path, model.state_dict())
+    calib_path = args.out / "calibration.bin"
+    calib_records = write_calibration_binary(calib_path, selected)
 
-    labels, canvases = make_teacher_trajectory(
-        args.batch, args.rounds, args.seed + 81001, device)
+    labels, canvases = make_teacher_trajectory(args.batch, args.rounds, args.seed + 81001, device)
     ref_logits, ref_checks = reference_trajectory(model, labels, canvases)
-
     labels_np = labels.detach().cpu().numpy().astype("<i4")
     canv_np = torch.stack(canvases).detach().cpu().numpy().astype("<i2")
     (args.out / "teacher_labels_i32.bin").write_bytes(labels_np.tobytes(order="C"))
@@ -153,18 +172,12 @@ def main():
 
     manifest = {
         "format": "H2_RESIDENT_BUNDLE_V1",
-        "numeric_reference": "float32; not final SpiNNaker-1 fixed-point format",
+        "numeric_reference": "float32; fixed-point mapping not yet frozen",
         "architecture": {
-            "seq": h0.SEQ,
-            "codebook": h0.CODEBOOK,
-            "d": args.d,
-            "layers": args.layers,
-            "heads": args.heads,
-            "head_dim": args.d // args.heads,
-            "ff": args.ff,
-            "features": args.features,
-            "teacher_batch": args.batch,
-            "teacher_rounds": args.rounds,
+            "seq": h0.SEQ, "codebook": h0.CODEBOOK, "d": args.d,
+            "layers": args.layers, "heads": args.heads, "head_dim": args.d // args.heads,
+            "ff": args.ff, "features": args.features,
+            "teacher_batch": args.batch, "teacher_rounds": args.rounds,
         },
         "contracts": {
             "persistent_block": 0,
@@ -175,39 +188,37 @@ def main():
             "host_stepwise_feedback_required": False,
         },
         "izh_calibration": selected_meta,
+        "calibration_binary": {
+            "file": calib_path.name,
+            "sha256": sha256(calib_path),
+            "max_decoder": MAX_DECODER,
+            "records": calib_records,
+        },
         "tensor_image": {
-            "file": model_path.name,
-            "sha256": sha256(model_path),
-            "alignment_bytes": ALIGN,
-            "tensors": tensor_manifest,
+            "file": model_path.name, "sha256": sha256(model_path),
+            "alignment_bytes": ALIGN, "tensors": tensor_manifest,
         },
         "teacher_input": {
-            "labels_file": "teacher_labels_i32.bin",
-            "labels_shape": list(labels_np.shape),
-            "canvases_file": "teacher_canvases_i16.bin",
-            "canvases_shape": list(canv_np.shape),
+            "labels_file": "teacher_labels_i32.bin", "labels_shape": list(labels_np.shape),
+            "canvases_file": "teacher_canvases_i16.bin", "canvases_shape": list(canv_np.shape),
         },
         "reference": {
             "logits_file": "reference_logits_f32.npy",
-            "logits_shape": list(ref_logits.shape),
-            "checks": ref_checks,
+            "logits_shape": list(ref_logits.shape), "checks": ref_checks,
         },
     }
     (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
-    # One compact binary header for the eventual C loader.  Magic + version + dimensions.
     hdr = struct.pack(
-        "<8sIIIIIIII",
-        b"H2RESV1\0", 1, h0.SEQ, args.d, args.layers, args.heads,
-        args.ff, args.features, args.rounds,
-    )
+        "<8sIIIIIIII", b"H2RESV1\0", 1, h0.SEQ, args.d, args.layers, args.heads,
+        args.ff, args.features, args.rounds)
     (args.out / "bundle_header.bin").write_bytes(hdr)
 
     print(json.dumps({
-        "stage": "H2_RESIDENT_BUNDLE_EXPORT",
-        "out": str(args.out),
+        "stage": "H2_RESIDENT_BUNDLE_EXPORT", "out": str(args.out),
         "model_bytes": model_path.stat().st_size,
         "model_sha256": manifest["tensor_image"]["sha256"],
+        "calibration_bytes": calib_path.stat().st_size,
         "teacher_shape": list(canv_np.shape),
         "reference_logits_shape": list(ref_logits.shape),
     }, indent=2))
