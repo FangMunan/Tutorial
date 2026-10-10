@@ -1,26 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-H2 pre-mapping audit: exact resident caching for persistent block 1.
+H2 pre-mapping audit: resident block-1 projection / dynamical-feature cache.
 
-Goal
-----
-Before porting the full model to SpiNNaker, remove repeated work that is provably
-unnecessary under the frozen H0/H1 monotonic MaskGIT semantics.
+This optimization is deliberately narrower than caching the whole attention read.
+It removes repeated Q/K/V projections and repeated Izh feature evaluations that are
+provably redundant in the persistent first block, while recomputing the transient
+H_m/g_m reduction from cached token contributions each round.  Recomputing that
+reduction preserves the current H1 numerical summation semantics much more closely
+than repeatedly subtracting old contributions from H_m/g_m.
 
-In block 1 the input is only
-    token_embedding + position_embedding + class_embedding.
-Therefore:
-  * a still-masked position has exactly the same Q/K/V and phi(Q/K) every round;
-  * once a token is committed it never changes again;
-  * only newly revealed positions need new Q/K/V/phi evaluation.
+Contract
+--------
+* generation starts fully masked;
+* reveal is monotonic (no committed token is re-masked);
+* block-1 input is token + position + class embedding only;
+* therefore a position changes at most once: MASK -> committed token.
 
-The existing H1-A sparse path already avoids K/V for committed tokens, but still
-recomputes Q for every token every round and K/V for every still-masked token.
-This audit replaces that with a resident cache while preserving H/g mathematics.
-
-No learning rule or model output is changed.  If this audit fails FP32 equivalence,
-the optimization must not be used on hardware.
+No learned function is changed.  The optimization is eligible for H2 hardware only
+if the calibrated resident path passes the FP32 equivalence gate against the frozen
+H1 sparse path.
 """
 from __future__ import annotations
 
@@ -31,10 +30,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
-import numpy as np
 import torch
-
 import sys
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "h1_cloud"))
 import h0_base as h0
 import h1_sparse_fusion as h1
@@ -46,8 +44,6 @@ import h1b21_qk_layer_scan as b21
 class CachedState:
     Hp: torch.Tensor
     gp: torch.Tensor
-    Hm: torch.Tensor
-    gm: torch.Tensor
     pq_cache: torch.Tensor
     pk_mask: torch.Tensor
     v_mask: torch.Tensor
@@ -69,77 +65,73 @@ def persistent_cached(
     state: Optional[CachedState],
     alpha: torch.Tensor,
 ) -> Tuple[torch.Tensor, CachedState, Dict[str, float]]:
-    """Exact block-1 persistent read with resident masked/committed caches.
-
-    Contract:
-      * first call starts from a fully masked canvas;
-      * reveal is monotonic thereafter;
-      * block-1 input embedding for a position changes only once: MASK -> token.
-
-    Persistent committed state Hp/gp is selectively decayed exactly as H0/H1.
-    Masked transient state Hm/gm is NOT decayed; it is maintained by subtracting
-    the cached mask contribution when a position becomes known.
-    """
     B, N, _ = x.shape
     H, M, dh = self.heads, self.m, self.dh
+    initialized_now = state is None
 
     if state is None:
         if bool(known.any()):
-            raise RuntimeError("Cached block1 requires the first generation canvas to be fully masked")
+            raise RuntimeError(
+                "Resident block1 cache requires the first generation canvas to be fully masked"
+            )
         q0 = self._split(self.q(x))
         k0 = self._split(self.k(x))
         v0 = self._split(self.v(x))
         pq0 = self.phi(q0, is_query=True)
         pk0 = self.phi(k0, is_query=False)
-        Hp = torch.zeros(B, H, M, dh, device=x.device, dtype=x.dtype)
-        gp = torch.zeros(B, H, M, device=x.device, dtype=x.dtype)
-        Hm = torch.einsum("bhnm,bhnd->bhmd", pk0, v0)
-        gm = pk0.sum(dim=2)
         state = CachedState(
-            Hp=Hp, gp=gp, Hm=Hm, gm=gm,
-            pq_cache=pq0.clone(), pk_mask=pk0.clone(), v_mask=v0.clone(),
+            Hp=torch.zeros(B, H, M, dh, device=x.device, dtype=x.dtype),
+            gp=torch.zeros(B, H, M, device=x.device, dtype=x.dtype),
+            pq_cache=pq0.clone(),
+            pk_mask=pk0.clone(),
+            v_mask=v0.clone(),
             known=torch.zeros(B, N, device=x.device, dtype=torch.bool),
-            total_q_tokens=B*N, total_kv_tokens=B*N,
+            total_q_tokens=B * N,
+            total_kv_tokens=B * N,
         )
 
     prev_known = state.known
     remasked = prev_known & (~known)
     if bool(remasked.any()):
-        raise RuntimeError("Resident cache assumes monotonic reveal; remasking detected")
+        raise RuntimeError("Resident block1 cache assumes monotonic reveal; remasking detected")
 
-    # Selective retention acts only on committed historical state, exactly as H0/H1.
+    # Synchronized selective retention applies only to committed historical state.
     Hp = state.Hp * alpha.reshape(B, H, 1, 1)
     gp = state.gp * alpha.reshape(B, H, 1)
-    Hm = state.Hm.clone()
-    gm = state.gm.clone()
     pq_cache = state.pq_cache.clone()
 
     new_known = known & (~prev_known)
     n_new_total = 0
 
+    # A newly revealed token is projected / dynamically mapped exactly once.
     for bi in range(B):
         idx = torch.nonzero(new_known[bi], as_tuple=False).flatten()
         n_new_total += int(idx.numel())
         if idx.numel() == 0:
             continue
-
-        # Remove the old MASK contribution from the transient state.
-        pkm = state.pk_mask[bi:bi+1, :, idx, :]
-        vm = state.v_mask[bi:bi+1, :, idx, :]
-        Hm[bi:bi+1] -= torch.einsum("bhnm,bhnd->bhmd", pkm, vm)
-        gm[bi:bi+1] -= pkm.sum(dim=2)
-
-        # Evaluate the newly committed token exactly once and cache its query feature.
-        xa = x[bi:bi+1, idx, :]
+        xa = x[bi:bi + 1, idx, :]
         qa = _split_projected(self.q, xa, H, dh)
         ka = _split_projected(self.k, xa, H, dh)
         va = _split_projected(self.v, xa, H, dh)
         pqa = self.phi(qa, is_query=True)
         pka = self.phi(ka, is_query=False)
-        pq_cache[bi:bi+1, :, idx, :] = pqa
+        pq_cache[bi:bi + 1, :, idx, :] = pqa
+        Hp[bi:bi + 1] += torch.einsum("bhnm,bhnd->bhmd", pka, va)
+        gp[bi:bi + 1] += pka.sum(dim=2)
 
-        Hp[bi:bi+1] += torch.einsum("bhnm,bhnd->bhmd", pka, va)
-        gp[bi:bi+1] += pka.sum(dim=2)
+    # Rebuild transient Hm/gm from cached MASK features.  This costs the outer-product
+    # reduction but *not* Q/K/V projection nor the 6-ms Izh feature dynamics.  Using
+    # the same sorted masked-token subset each round preserves the H1 reduction order.
+    Hm = torch.zeros_like(Hp)
+    gm = torch.zeros_like(gp)
+    for bi in range(B):
+        midx = torch.nonzero(~known[bi], as_tuple=False).flatten()
+        if midx.numel() == 0:
+            continue
+        pkm = state.pk_mask[bi:bi + 1, :, midx, :]
+        vm = state.v_mask[bi:bi + 1, :, midx, :]
+        Hm[bi:bi + 1] = torch.einsum("bhnm,bhnd->bhmd", pkm, vm)
+        gm[bi:bi + 1] = pkm.sum(dim=2)
 
     Htot = Hp + Hm
     gtot = gp + gm
@@ -149,8 +141,11 @@ def persistent_cached(
     out = self.out(y.transpose(1, 2).reshape(x.shape))
 
     ns = CachedState(
-        Hp=Hp, gp=gp, Hm=Hm, gm=gm,
-        pq_cache=pq_cache, pk_mask=state.pk_mask, v_mask=state.v_mask,
+        Hp=Hp,
+        gp=gp,
+        pq_cache=pq_cache,
+        pk_mask=state.pk_mask,
+        v_mask=state.v_mask,
         known=known.clone(),
         total_q_tokens=state.total_q_tokens + n_new_total,
         total_kv_tokens=state.total_kv_tokens + n_new_total,
@@ -160,8 +155,8 @@ def persistent_cached(
         "masked_mean": float((~known).sum(1).float().mean().detach().cpu()),
         "state_H_rms": float(Hp.square().mean().sqrt().detach().cpu()),
         "state_g_min": float(gp.min().detach().cpu()),
-        "q_tokens_evaluated_this_step": float(B*N if state.total_q_tokens == B*N and not bool(prev_known.any()) else n_new_total),
-        "kv_tokens_evaluated_this_step": float(B*N if state.total_kv_tokens == B*N and not bool(prev_known.any()) else n_new_total),
+        "q_tokens_evaluated_this_step": float(B * N if initialized_now else n_new_total),
+        "kv_tokens_evaluated_this_step": float(B * N if initialized_now else n_new_total),
         "resident_q_tokens_total": float(ns.total_q_tokens),
         "resident_kv_tokens_total": float(ns.total_kv_tokens),
     }
@@ -180,7 +175,6 @@ def load_selected(path: Path, device):
     d = json.loads(path.read_text())
     out = {}
     for key, val in d["selected"].items():
-        # key form L0_Q
         layer = int(key.split("_")[0][1:])
         side = key.split("_")[1]
         out[(layer, side)] = {
@@ -198,10 +192,8 @@ def audit(current, cached, device, rounds=10, batch=4, seed=991):
     rows = []
     max_abs = 0.0
     max_rel = 0.0
-    current_q_total = 0.0
-    current_kv_total = 0.0
-    cached_q_total = 0.0
-    cached_kv_total = 0.0
+    current_q_total = current_kv_total = 0.0
+    cached_q_total = cached_kv_total = 0.0
 
     for ri, cur in enumerate(canvases):
         yc, sc, sts_c = current.forward_persistent(cur, labels, sc, "selective")
@@ -212,17 +204,10 @@ def audit(current, cached, device, rounds=10, batch=4, seed=991):
         max_abs = max(max_abs, ae)
         max_rel = max(max_rel, re)
 
-        # Existing H1 sparse path: Q for all N every round, K/V for active tokens.
         current_q_total += batch * h0.SEQ
         current_kv_total += batch * float(sts_c["active_kv_tokens_mean"])
-        # Resident path: initial all-mask evaluation + newly revealed tokens only.
-        if ri == 0:
-            cached_q_total += batch * h0.SEQ
-            cached_kv_total += batch * h0.SEQ
-        else:
-            nnew = batch * float(sts_r["new_known_mean"])
-            cached_q_total += nnew
-            cached_kv_total += nnew
+        cached_q_total += float(sts_r["q_tokens_evaluated_this_step"])
+        cached_kv_total += float(sts_r["kv_tokens_evaluated_this_step"])
 
         rows.append({
             "round": ri,
@@ -246,6 +231,7 @@ def audit(current, cached, device, rounds=10, batch=4, seed=991):
             "q_reduction_fraction": 1.0 - cached_q_total / current_q_total,
             "kv_reduction_fraction": 1.0 - cached_kv_total / current_kv_total,
             "combined_q_plus_kv_reduction_fraction": 1.0 - (cached_q_total + cached_kv_total) / (current_q_total + current_kv_total),
+            "note": "Transient Hm/gm outer-product reduction is still executed each round; these counts cover projection + dynamic-feature evaluations only."
         },
     }
 
@@ -280,8 +266,10 @@ def main():
 
     result = audit(current, cached, device, rounds=10, batch=4, seed=args.seed + 70001)
     result["stage"] = "H2_BLOCK1_RESIDENT_CACHE_AUDIT"
-    result["architecture"] = {"seq": h0.SEQ, "d": args.d, "layers": args.layers,
-                              "heads": args.heads, "features": args.features}
+    result["architecture"] = {
+        "seq": h0.SEQ, "d": args.d, "layers": args.layers,
+        "heads": args.heads, "features": args.features
+    }
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "H2_CACHE_AUDIT.json").write_text(json.dumps(result, indent=2))
     print("H2_CACHE_AUDIT_DONE", json.dumps(result, indent=2), flush=True)
