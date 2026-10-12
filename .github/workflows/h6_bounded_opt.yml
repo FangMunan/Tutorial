@@ -1,0 +1,50 @@
+name: H6 bounded optimization
+
+on:
+  push:
+    branches:
+      - h6a1-bounded-opt-20261012
+  workflow_dispatch:
+
+jobs:
+  bounded_opt:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 210
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy matplotlib scikit-learn
+          python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+      - name: Download frozen H6-A artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: H6_PIXEL784_STANDARD_RESULTS
+          path: INPUT_H6
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 38237473453
+      - name: Inspect input
+        run: |
+          find INPUT_H6 -maxdepth 2 -type f -printf '%p %s bytes\n' | sort
+      - name: Run bounded optimization
+        run: |
+          python h6_pixel784/optimize_h6_bounded.py \
+            --baseline-dir INPUT_H6/H6_PIXEL784_STANDARD \
+            --out H6_BOUNDED_OPT \
+            --ngen 300 --threads 4 --seed 7 \
+            | tee H6_BOUNDED_OPT.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: H6_BOUNDED_OPT_RESULTS
+          path: |
+            H6_BOUNDED_OPT
+            H6_BOUNDED_OPT.log
+          retention-days: 30
