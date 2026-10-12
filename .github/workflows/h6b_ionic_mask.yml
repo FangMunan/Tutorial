@@ -77,6 +77,9 @@ jobs:
 
       - name: Run matched H6-B replacement test
         run: |
+          set -o pipefail
+          # Compatibility fix: train_h6_pixel784.load_canonical_ionic returns only by_id.
+          sed -i 's/by_id,_raw=h6.load_canonical_ionic(args.ionic)/by_id=h6.load_canonical_ionic(args.ionic)/' h6_pixel784/test_h6b_ionic_mask.py
           python h6_pixel784/test_h6b_ionic_mask.py \
             --standard-dir INPUT_STANDARD \
             --bounded-dir INPUT_BOUNDED \
