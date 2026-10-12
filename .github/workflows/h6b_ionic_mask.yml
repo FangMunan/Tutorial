@@ -5,8 +5,6 @@ on:
   push:
     branches:
       - h6b-ionic-mask-noninferiority-20261012
-    paths:
-      - data/PGI_ionic_binary.npz
 
 jobs:
   ionic_mask_test:
@@ -46,22 +44,35 @@ jobs:
           repository: FangMunan/Tutorial
           run-id: 38262603694
 
-      - name: Audit canonical ionic input
+      - name: Reconstruct and audit canonical ionic input
         run: |
-          test -f data/PGI_ionic_binary.npz || {
-            echo 'ERROR: data/PGI_ionic_binary.npz is required.' >&2
-            echo 'Do not use synthetic data and do not re-threshold another trace.' >&2
+          test -f data/PGI_ionic_binary.npz.b64 || {
+            echo 'ERROR: canonical ionic base64 transport is missing.' >&2
             exit 2
           }
-          sha256sum data/PGI_ionic_binary.npz
+          base64 -d data/PGI_ionic_binary.npz.b64 > data/PGI_ionic_binary.npz
+          ACTUAL=$(sha256sum data/PGI_ionic_binary.npz | awk '{print $1}')
+          EXPECTED='e1a15af265db3af8ceae998ef7aaff1ea73cb55083e7b727ba0ae550029d16e8'
+          echo "ionic_sha256=$ACTUAL"
+          test "$ACTUAL" = "$EXPECTED" || {
+            echo "ERROR: canonical ionic SHA256 mismatch" >&2
+            exit 2
+          }
           python - <<'PY'
           import numpy as np
           p='data/PGI_ionic_binary.npz'
           d=np.load(p,allow_pickle=False)
+          assert set(d.files)=={'bits_concat','sequence_ids','sequence_offsets'}, d.files
+          bits=np.asarray(d['bits_concat'],dtype=np.uint8)
+          ids=np.asarray(d['sequence_ids']).astype(str)
+          off=np.asarray(d['sequence_offsets'],dtype=np.int64)
+          assert bits.ndim==1 and np.all(np.isin(np.unique(bits),[0,1]))
+          assert len(off)==len(ids)+1 and off[0]==0 and off[-1]==len(bits)
           print('keys=',d.files)
-          for k in d.files:
-              a=d[k]
-              print(k,a.shape,a.dtype)
+          print('ids=',ids.tolist())
+          print('offsets=',off.tolist())
+          print('lengths=',np.diff(off).tolist())
+          print('one_fractions=',[float(bits[off[i]:off[i+1]].mean()) for i in range(len(ids))])
           PY
 
       - name: Run matched H6-B replacement test
