@@ -1,0 +1,76 @@
+name: H6 784-pixel SNN-Transform
+
+on:
+  push:
+    branches:
+      - h6-pixel784-ionic-snn-transform-20261012
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy matplotlib scikit-learn
+          python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+      - name: Standard-controller structural smoke
+        run: |
+          python h6_pixel784/train_h6_pixel784.py \
+            --out H6_SMOKE_STANDARD --controller standard --smoke --threads 4 \
+            | tee H6_SMOKE_STANDARD.log
+      - name: Ionic-scanner structural smoke with synthetic bits
+        run: |
+          python h6_pixel784/train_h6_pixel784.py \
+            --out H6_SMOKE_IONIC --controller ionic --smoke --threads 4 \
+            | tee H6_SMOKE_IONIC.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: H6_PIXEL784_SMOKE
+          path: |
+            H6_SMOKE_STANDARD
+            H6_SMOKE_IONIC
+            H6_SMOKE_STANDARD.log
+            H6_SMOKE_IONIC.log
+          retention-days: 7
+
+  standard_full:
+    needs: smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy matplotlib scikit-learn
+          python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+      - name: Train H6-A standard 784-pixel software reference
+        run: |
+          python h6_pixel784/train_h6_pixel784.py \
+            --out H6_PIXEL784_STANDARD \
+            --controller standard \
+            --epochs 20 --n-per-class 2000 --batch 32 \
+            --d 128 --layers 4 --heads 4 --ff 512 --features 128 \
+            --gate-epochs 1 --gate-samples 1024 --gate-batch 16 --gate-steps 4 \
+            --decode-steps 24 --choice-temperature 4.5 --ngen 300 \
+            --threads 4 --seed 7 \
+            | tee H6_PIXEL784_STANDARD.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: H6_PIXEL784_STANDARD_RESULTS
+          path: |
+            H6_PIXEL784_STANDARD
+            H6_PIXEL784_STANDARD.log
+          retention-days: 30
