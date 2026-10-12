@@ -1,0 +1,85 @@
+name: H6-B ionic mask non-inferiority
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - h6b-ionic-mask-noninferiority-20261012
+    paths:
+      - data/PGI_ionic_binary.npz
+
+jobs:
+  ionic_mask_test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy matplotlib scikit-learn
+          python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Download H6-A frozen software artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: H6_PIXEL784_STANDARD_RESULTS
+          path: INPUT_STANDARD
+          github-token: ${{ github.token }}
+          repository: FangMunan/Tutorial
+          run-id: 38237473453
+
+      - name: Download bounded-optimization artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: H6_BOUNDED_OPT_RESULTS
+          path: INPUT_BOUNDED
+          github-token: ${{ github.token }}
+          repository: FangMunan/Tutorial
+          run-id: 38262603694
+
+      - name: Audit canonical ionic input
+        run: |
+          test -f data/PGI_ionic_binary.npz || {
+            echo 'ERROR: data/PGI_ionic_binary.npz is required.' >&2
+            echo 'Do not use synthetic data and do not re-threshold another trace.' >&2
+            exit 2
+          }
+          sha256sum data/PGI_ionic_binary.npz
+          python - <<'PY'
+          import numpy as np
+          p='data/PGI_ionic_binary.npz'
+          d=np.load(p,allow_pickle=False)
+          print('keys=',d.files)
+          for k in d.files:
+              a=d[k]
+              print(k,a.shape,a.dtype)
+          PY
+
+      - name: Run matched H6-B replacement test
+        run: |
+          python h6_pixel784/test_h6b_ionic_mask.py \
+            --standard-dir INPUT_STANDARD \
+            --bounded-dir INPUT_BOUNDED \
+            --ionic data/PGI_ionic_binary.npz \
+            --out H6B_IONIC_MASK \
+            --n 1000 --steps 96 --temperature 3.5 \
+            --gen-batch 32 --threads 4 --seed 7 \
+            | tee H6B_IONIC_MASK.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: H6B_IONIC_MASK_RESULTS
+          path: |
+            H6B_IONIC_MASK
+            H6B_IONIC_MASK.log
+          retention-days: 30
