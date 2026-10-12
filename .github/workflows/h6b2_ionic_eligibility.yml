@@ -1,0 +1,82 @@
+name: H6-B2 ionic eligibility confidence test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - h6b2-ionic-eligibility-confidence-20261013
+
+jobs:
+  ionic_eligibility_test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy matplotlib scikit-learn
+          python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Download H6-A frozen software artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: H6_PIXEL784_STANDARD_RESULTS
+          path: INPUT_STANDARD
+          github-token: ${{ github.token }}
+          repository: FangMunan/Tutorial
+          run-id: 38237473453
+
+      - name: Download frozen A2 checkpoint artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: H6_BOUNDED_OPT_RESULTS
+          path: INPUT_BOUNDED
+          github-token: ${{ github.token }}
+          repository: FangMunan/Tutorial
+          run-id: 38262603694
+
+      - name: Reconstruct and audit canonical ionic input
+        run: |
+          set -euo pipefail
+          test -f data/PGI_ionic_binary.npz.b64 || {
+            echo 'ERROR: canonical ionic base64 transport is missing.' >&2
+            exit 2
+          }
+          base64 -d data/PGI_ionic_binary.npz.b64 > data/PGI_ionic_binary.npz
+          ACTUAL=$(sha256sum data/PGI_ionic_binary.npz | awk '{print $1}')
+          EXPECTED='e1a15af265db3af8ceae998ef7aaff1ea73cb55083e7b727ba0ae550029d16e8'
+          echo "ionic_sha256=$ACTUAL"
+          test "$ACTUAL" = "$EXPECTED" || {
+            echo "ERROR: canonical ionic SHA256 mismatch" >&2
+            exit 2
+          }
+
+      - name: Run frozen A2 standard vs ionic eligibility
+        run: |
+          set -euo pipefail
+          python h6_pixel784/test_h6b2_ionic_eligibility.py \
+            --standard-dir INPUT_STANDARD \
+            --bounded-dir INPUT_BOUNDED \
+            --ionic data/PGI_ionic_binary.npz \
+            --out H6B2_IONIC_ELIGIBILITY \
+            --n 1000 --steps 96 --temperature 3.5 \
+            --threads 4 --seed 7 \
+            | tee H6B2_IONIC_ELIGIBILITY.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: H6B2_IONIC_ELIGIBILITY_RESULTS
+          path: |
+            H6B2_IONIC_ELIGIBILITY
+            H6B2_IONIC_ELIGIBILITY.log
+          retention-days: 30
