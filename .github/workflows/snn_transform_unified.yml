@@ -29,9 +29,11 @@ jobs:
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Compile
-        run: python -m py_compile unified_snn_transform/run_unified_gate.py
+        run: |
+          python -m py_compile unified_snn_transform/run_unified_gate.py
+          python -m py_compile unified_snn_transform/run_u2_event_qkv.py
 
-      - name: Run unified lightweight gate
+      - name: Run U0-U1 unified lightweight gate
         run: |
           mkdir -p unified_snn_transform/run/U0_U1
           python unified_snn_transform/run_unified_gate.py \
@@ -40,29 +42,39 @@ jobs:
             --steps 6 --batch 4 --change-frac 0.25 \
             --seed 7 --threads 4 | tee unified_snn_transform/run/U0_U1/run.log
 
-      - name: Show summary
+      - name: Run U2 event-cached QKV gate
+        run: |
+          mkdir -p unified_snn_transform/run/U2
+          python unified_snn_transform/run_u2_event_qkv.py \
+            --out unified_snn_transform/run/U2 \
+            --tokens 16 --d 32 --heads 2 --features 32 --ff 64 \
+            --steps 6 --batch 4 --change-frac 0.25 --eps 1e-5 \
+            --seed 7 --threads 4 | tee unified_snn_transform/run/U2/run.log
+
+      - name: Show summaries
         if: always()
         run: |
-          if [ -f unified_snn_transform/run/U0_U1/UNIFIED_RESULTS.json ]; then
-            python - <<'PY'
-          import json
-          p='unified_snn_transform/run/U0_U1/UNIFIED_RESULTS.json'
-          d=json.load(open(p))
-          print(json.dumps({
-            'stage': d.get('stage'),
-            'summary': d.get('summary'),
-            'compute': d.get('compute'),
-            'calibration': d.get('calibration'),
-            'gates': d.get('gates'),
-            'PASS': d.get('PASS'),
-          }, indent=2))
+          python - <<'PY'
+          import json, os
+          for name,path in [
+              ('U0_U1','unified_snn_transform/run/U0_U1/UNIFIED_RESULTS.json'),
+              ('U2','unified_snn_transform/run/U2/U2_RESULTS.json')]:
+              if os.path.exists(path):
+                  d=json.load(open(path))
+                  print('\n===',name,'===')
+                  keep={'stage':d.get('stage'),'gates':d.get('gates'),'PASS':d.get('PASS')}
+                  if name=='U0_U1':
+                      keep.update(summary=d.get('summary'),compute=d.get('compute'),calibration=d.get('calibration'))
+                  else:
+                      keep.update(q=d.get('q'),k=d.get('k'),v=d.get('v'),
+                                  downstream_delta_density=d.get('downstream_delta_density'),decision=d.get('decision'))
+                  print(json.dumps(keep,indent=2))
           PY
-          fi
 
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SNN_TRANSFORM_UNIFIED_U0_U1
-          path: unified_snn_transform/run/U0_U1
+          name: SNN_TRANSFORM_UNIFIED_U0_U2
+          path: unified_snn_transform/run
           retention-days: 30
