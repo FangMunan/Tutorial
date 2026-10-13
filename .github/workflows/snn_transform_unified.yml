@@ -1,0 +1,68 @@
+name: Unified SNN-Transform Lightweight
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - snn-transform-unified-20261014
+    paths:
+      - 'unified_snn_transform/**'
+      - '.github/workflows/snn_transform_unified.yml'
+
+jobs:
+  unified-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Compile
+        run: python -m py_compile unified_snn_transform/run_unified_gate.py
+
+      - name: Run unified lightweight gate
+        run: |
+          mkdir -p unified_snn_transform/run/U0_U1
+          python unified_snn_transform/run_unified_gate.py \
+            --out unified_snn_transform/run/U0_U1 \
+            --tokens 16 --d 32 --heads 2 --features 32 --ff 64 \
+            --steps 6 --batch 4 --change-frac 0.25 \
+            --seed 7 --threads 4 | tee unified_snn_transform/run/U0_U1/run.log
+
+      - name: Show summary
+        if: always()
+        run: |
+          if [ -f unified_snn_transform/run/U0_U1/UNIFIED_RESULTS.json ]; then
+            python - <<'PY'
+          import json
+          p='unified_snn_transform/run/U0_U1/UNIFIED_RESULTS.json'
+          d=json.load(open(p))
+          print(json.dumps({
+            'stage': d.get('stage'),
+            'summary': d.get('summary'),
+            'compute': d.get('compute'),
+            'calibration': d.get('calibration'),
+            'gates': d.get('gates'),
+            'PASS': d.get('PASS'),
+          }, indent=2))
+          PY
+          fi
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_UNIFIED_U0_U1
+          path: unified_snn_transform/run/U0_U1
+          retention-days: 30
