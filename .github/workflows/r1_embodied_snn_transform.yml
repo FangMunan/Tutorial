@@ -1,0 +1,69 @@
+name: SNN Transform R1 Embodied Routing
+
+on:
+  push:
+    branches:
+      - restore-snn-transform-r1-20261013
+    paths:
+      - 'snn_transform_restore/r1/**'
+      - '.github/workflows/r1_embodied_snn_transform.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  r1-embodied-routing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install CPU PyTorch
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Compile R1
+        run: |
+          python -m py_compile snn_transform_restore/r1/R1_EMBODIED_ROUTING.py
+
+      - name: Run R1 embodied routing gate
+        run: |
+          cd snn_transform_restore/r1
+          python R1_EMBODIED_ROUTING.py | tee R1_RUN.log
+
+      - name: Show R1 summary
+        if: always()
+        run: |
+          if [ -f snn_transform_restore/r1/R1_RESULTS.json ]; then
+            python - <<'PY'
+          import json
+          p='snn_transform_restore/r1/R1_RESULTS.json'
+          d=json.load(open(p))
+          print(json.dumps({
+            'stage': d.get('stage'),
+            'status': d.get('status'),
+            'source_audit': d.get('source_audit'),
+            'claim_boundary': d.get('claim_boundary'),
+          }, indent=2))
+          PY
+          fi
+
+      - name: Upload R1 results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R1_RESULTS
+          path: |
+            snn_transform_restore/r1/R1_RESULTS.json
+            snn_transform_restore/r1/R1_RUN.log
+          if-no-files-found: warn
+          retention-days: 30
