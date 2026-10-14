@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   h2_host_kernel_gate:
@@ -22,6 +23,16 @@ jobs:
           python-version: '3.11'
       - name: Install host test dependency
         run: python -m pip install numpy
+      - name: Download frozen H1.1 functional-v9 HIR
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_SPINNAKER_H1_1_FUNCTIONAL_V9
+          path: spinnaker_backend/run/H2/source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 38575839809
+      - name: Show frozen HIR payload
+        run: find spinnaker_backend/run/H2/source -maxdepth 4 -type f -print
       - name: Show C compiler
         run: gcc --version
       - name: Strict host compile
@@ -29,9 +40,13 @@ jobs:
           gcc -std=c11 -O2 -Wall -Wextra -Werror \
             -c spinnaker_backend/h2_aplx/h2_kernels.c \
             -o /tmp/h2_kernels.o
-      - name: Run bit-exact H2 C kernel parity gate
+      - name: Run bit-exact H2 primitive kernel parity gate
         run: python spinnaker_backend/h2_aplx/test_h2_kernels.py
+      - name: Run H2D actual frozen-HIR full-step parity gate
+        run: |
+          python spinnaker_backend/h2_aplx/test_h2_actual_hir.py \
+            --hir spinnaker_backend/run/H2/source/functional_v9/SNNTransformBlock_v1_1_HIR_H1_1_FUNCTIONAL_V9.npz
       - name: Record H2 scope
         run: |
-          echo 'H2 host kernel gate only.'
+          echo 'H2 host C full-step parity gate only.'
           echo 'This does not claim APLX cross-compilation or SpiNNaker board execution.'
