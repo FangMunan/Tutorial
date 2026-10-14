@@ -10,6 +10,7 @@ on:
       - 'spinnaker_backend/run_h1_1_frozen_checkpoint_v3.py'
       - 'spinnaker_backend/run_h1_1_frozen_checkpoint_v4.py'
       - 'spinnaker_backend/run_h1_1_frozen_checkpoint_v5.py'
+      - 'spinnaker_backend/run_h1_1_frozen_checkpoint_v6.py'
       - 'spinnaker_backend/h1_fixed_point_emulator.py'
       - 'SNNTransformBlock_v1_1/**'
       - '.github/workflows/snn_transform_spinnaker_h1_1.yml'
@@ -48,21 +49,21 @@ jobs:
           python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint.py
           python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint_v2.py
           python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint_v3.py
-          python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint_v4.py
-          python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint_v5.py
+          python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint_v6.py
           python -m py_compile SNNTransformBlock_v1_1/SNNTransformBlock_v1_1.py
-      - name: Run H1.1 v5 actual-checkpoint gate
+      - name: Run H1.1 v6 actual-checkpoint gate
         run: |
-          python -m spinnaker_backend.run_h1_1_frozen_checkpoint_v5 \
+          python -m spinnaker_backend.run_h1_1_frozen_checkpoint_v6 \
             --checkpoint spinnaker_backend/run/H1_1/source/SNNTransformBlock_v1.pt \
-            --out spinnaker_backend/run/H1_1/result_v5 \
+            --out spinnaker_backend/run/H1_1/result_v6 \
             --batch 8 --steps 6 --change-frac 0.25 --seed 17171
-      - name: Upload H1.1 v5 result and HIR
+      - name: Upload H1.1 v6 result and HIR
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: SNN_TRANSFORM_SPINNAKER_H1_1_V5
+          name: SNN_TRANSFORM_SPINNAKER_H1_1_V6
           path: |
-            spinnaker_backend/run/H1_1/result_v5/H1_1_V2_RESULTS.json
-            spinnaker_backend/run/H1_1/result_v5/SNNTransformBlock_v1_1_HIR_H1_1_v2.npz
+            spinnaker_backend/run/H1_1/result_v6/H1_1_V2_RESULTS.json
+            spinnaker_backend/run/H1_1/result_v6/SNNTransformBlock_v1_1_HIR_H1_1_v2.npz
+            spinnaker_backend/run/H1_1/H1_1_DECODER_CALIBRATION.json
           retention-days: 30
