@@ -1,0 +1,47 @@
+name: SNN Transform U5 Full Block Freeze
+
+on:
+  push:
+    branches: [snn-transform-block-v1-20261014]
+  workflow_dispatch:
+
+jobs:
+  u5:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Compile
+        run: |
+          python -m py_compile unified_snn_transform/snn_transform_block.py
+          python -m py_compile unified_snn_transform/run_u5_full_block_freeze.py
+      - name: Run U5 full-block freeze gate
+        run: |
+          mkdir -p unified_snn_transform/run/U5
+          cd unified_snn_transform
+          python run_u5_full_block_freeze.py \
+            --out run/U5 \
+            --tokens 16 --d 32 --heads 2 --features 32 --ff 64 --value-dim 8 \
+            --train-steps 900 --train-batch 128 --eval-batches 12 --eval-batch 64 \
+            --pool 28 --pair-top 5 --event-batch 8 --event-steps 6 --change-frac 0.25 \
+            --seed 71 --threads 4 | tee run/U5/run.log
+      - name: Show summary
+        run: |
+          python - <<'PY'
+          import json
+          p='unified_snn_transform/run/U5/U5_RESULTS.json'
+          d=json.load(open(p))
+          print(json.dumps({k:d[k] for k in ['stage','PASS','architecture','packaging','izh_integration','event_cache','state_api','tail_compute','gates','decision']}, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_BLOCK_V1
+          path: unified_snn_transform/run/U5
+          retention-days: 30
