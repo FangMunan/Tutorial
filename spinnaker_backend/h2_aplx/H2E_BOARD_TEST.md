@@ -8,8 +8,15 @@ ARM968 core.  It does **not** yet load the full H1.1 frozen HIR; that is H2F.
 
 Use the same Python environment in which the existing sPyNNaker Manchester
 spalloc tests work.  The runner reads only the compatible `[Machine]` options
-from the existing `~/.spynnaker.cfg` and creates a temporary
-`spiNNakerGraphFrontEnd.cfg` for the non-neural GraphFrontEnd loader.
+from the existing `~/.spynnaker.cfg`.
+
+SpiNNakerGraphFrontEnd 7.4.1 requires a user config named
+`~/.spiNNakerGraphFrontEnd.cfg` to exist before it will read the run-local
+`spiNNakerGraphFrontEnd.cfg`.  A run-local file alone therefore raises
+`NoConfigFoundException`.  The current runner handles this automatically by
+creating an isolated temporary HOME under the run directory, writing the hidden
+GraphFrontEnd user config there, and restoring the real HOME/XDG environment
+after the test.  It does not overwrite the user's permanent home config.
 
 From the repository root:
 
@@ -46,12 +53,13 @@ spinnaker_backend/run/H2E_spalloc_board/<UTC>/
     H2E_SPALLOC_BOARD_SELFTEST.json
     core_iobuf.txt
     spiNNakerGraphFrontEnd.cfg
+    _gfe_home/.spiNNakerGraphFrontEnd.cfg
     snn_transform_h2.aplx
 ```
 
-The generated config can contain the copied spalloc user name and is therefore
-created with mode `0600` where supported.  The JSON intentionally records only
-whether a user/group was configured, not their values.
+The generated configs can contain the copied spalloc user name and are created
+with mode `0600` where supported.  The JSON intentionally records only whether
+a user/group was configured, not their values.
 
 ## Direct-board fallback
 
