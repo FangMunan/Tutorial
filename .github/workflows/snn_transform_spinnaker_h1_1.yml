@@ -1,0 +1,60 @@
+name: SNN Transform SpiNNaker H1.1 Frozen Checkpoint
+
+on:
+  push:
+    branches:
+      - snn-transform-spinnaker-h0-h1-20261014
+    paths:
+      - 'spinnaker_backend/run_h1_1_frozen_checkpoint.py'
+      - 'spinnaker_backend/h1_fixed_point_emulator.py'
+      - 'SNNTransformBlock_v1_1/**'
+      - '.github/workflows/snn_transform_spinnaker_h1_1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  h1_1:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Download frozen U5 checkpoint artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_BLOCK_V1
+          path: spinnaker_backend/run/H1_1/source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 38538624735
+      - name: Inspect source artifact
+        run: find spinnaker_backend/run/H1_1/source -maxdepth 2 -type f -print
+      - name: Compile H1.1 code
+        run: |
+          python -m py_compile spinnaker_backend/h1_fixed_point_emulator.py
+          python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint.py
+          python -m py_compile SNNTransformBlock_v1_1/SNNTransformBlock_v1_1.py
+      - name: Run H1.1 actual-checkpoint gate
+        run: |
+          python -m spinnaker_backend.run_h1_1_frozen_checkpoint \
+            --checkpoint spinnaker_backend/run/H1_1/source/SNNTransformBlock_v1.pt \
+            --out spinnaker_backend/run/H1_1/result \
+            --batch 8 --steps 6 --change-frac 0.25 --value-dim 8 --seed 17171
+      - name: Upload H1.1 result and HIR
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: SNN_TRANSFORM_SPINNAKER_H1_1
+          path: |
+            spinnaker_backend/run/H1_1/result/H1_1_RESULTS.json
+            spinnaker_backend/run/H1_1/result/SNNTransformBlock_v1_1_HIR_H1_1.npz
+          retention-days: 30
