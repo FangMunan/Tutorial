@@ -1,0 +1,53 @@
+name: SNN Transform U4G PerHead Search
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - snn-transform-u4-sparse-tail-20261014
+    paths:
+      - 'unified_snn_transform/run_u4g_perhead_search.py'
+      - '.github/workflows/u4g_perhead_search.yml'
+
+jobs:
+  u4g:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Compile
+        run: python -m py_compile unified_snn_transform/run_u4g_perhead_search.py
+      - name: Run U4G
+        run: |
+          mkdir -p unified_snn_transform/run/U4G
+          python unified_snn_transform/run_u4g_perhead_search.py \
+            --out unified_snn_transform/run/U4G \
+            --tokens 16 --d 32 --heads 2 --features 32 --ff 64 --value-dim 8 \
+            --train-steps 900 --train-batch 128 --eval-batches 12 --eval-batch 64 \
+            --pool 28 --pair-top 5 --seed 71 --threads 4 \
+            | tee unified_snn_transform/run/U4G/run.log
+      - name: Show summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json,os
+          p='unified_snn_transform/run/U4G/U4G_RESULTS.json'
+          if os.path.exists(p):
+              d=json.load(open(p));print(json.dumps({'stage':d['stage'],'PASS':d['PASS'],
+                  'selected_Q':d['selected_Q'],'selected_K':d['selected_K'],
+                  'heldout_QK':d['heldout_QK'],'spike_activity':d['spike_activity'],
+                  'gates':d['gates'],'decision':d['decision']},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: SNN_TRANSFORM_U4G_PERHEAD_SEARCH
+          path: unified_snn_transform/run/U4G
+          retention-days: 30
