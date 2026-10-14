@@ -1,6 +1,6 @@
-# SNN-Transform unified project status — U4G
+# SNN-Transform unified project status — U5 / Block v1
 
-Canonical development line: `snn-transform-u4-sparse-tail-20261014`
+Canonical frozen line: `snn-transform-block-v1-20261014`
 
 ## Frozen / accepted results
 
@@ -8,92 +8,115 @@ Canonical development line: `snn-transform-u4-sparse-tail-20261014`
 PASS. Positive-RF normalized linear attention with persistent H/g is the reference computation. Izh feature replacement is treated as a neuronal-dynamics interface, not as a strict spike-only claim.
 
 ### U2 — event-cached Q/K/V
-PASS as an algebraic/event-execution gate. On the lightweight trajectory, token projection evaluations fall from 384 to 144 (62.5% reduction) with zero numerical error in the cache test. Integration caveat: the current main `LinearAttentionCore.step` still evaluates Q globally; the Q-cache proof remains to be folded into the canonical implementation.
+PASS and now integrated into the canonical block, including Q. In the U5 6-step, 25%-change trajectory, Q/K/V token projections each fall from 768 dense evaluations to 288 event evaluations (62.5% reduction) with zero numerical difference from a dense-projection reference under the same state-update semantics.
 
 ### U3.1 — trained-distribution Izh interface
 PASS on the dense-tail trained retrieval block. Held-out Q+K replacement reached ~0.446% prediction relative-L2 with unchanged 100% task sign accuracy.
 
 ### Mamba-like selective retention
-PARKED, not rejected. The mechanism learned different retention for reset/non-reset inputs, but U3B did not establish a functional task advantage because the gate task itself remained at chance. Revisit only when a long-context/context-switch workload actually requires selective forgetting.
+PARKED, not rejected. It is deliberately excluded from Block v1. The canonical v1 uses fixed retention alpha=1 and exposes a retention argument for later experiments. Revisit only when a long-context/context-switch task actually requires selective forgetting.
 
 ## U4 — sparse Output Projection + FFN
 
-### U4A — frozen dense random teacher screen
-FAIL, as expected for the wrong equivalence question. A sparse network is not expected to reproduce an arbitrary frozen dense random mapping exactly. This result is retained only as a negative control.
-
 ### U4B — task-trained sparse architecture
+PASS and frozen in Block v1.
+
+Strongest structure:
+- output projection density = 25%
+- FFN input density = 25%
+- FFN output density = 25%
+- thresholded exact-zero hidden population
+- task sign accuracy = 100%
+- static tail synapses = 1280 vs 5120 dense (25%)
+- U5 hidden activity ~63.8%
+- U5 effective tail SynOp proxy ~21.38% of dense (~78.62% reduction)
+
+This is a task-trained sparse realization, not a claim that an arbitrary dense tail can be pruned losslessly.
+
+### U4G — stable per-head Izh operating-point calibration
+PASS and frozen as the neuronal feature interface.
+
+Each attention head uses the same Izh RS -> membrane trajectory -> fixed linear decoder principle but may have its own fixed operating point and decoder.
+
+## U5 — canonical full block
+
+### API / implementation
 PASS.
 
-Strongest tested point:
-- output projection connectivity density = 25%
-- FFN input connectivity density = 25%
-- FFN output connectivity density = 25%
-- task sign accuracy = 100%
-- shuffled key/value binding control sign accuracy ~54%
-- static tail synapses = 1280 vs 5120 dense (25%)
-- hidden activity ~64%
-- effective tail SynOp proxy ~21–22% of dense (~78% reduction)
+The accepted operators are now packaged in `snn_transform_block.py` behind:
 
-Scientific conclusion: the lightweight retrieval function can be learned by a structurally sparse Output+FFN realization. This establishes U4 sparse-tail feasibility; it is not a claim that an arbitrary trained dense tail can be losslessly pruned.
+```python
+y, state = SNNTransformBlock(x, state)
+```
 
-### U4C/U4D — localization of the composition error
-The first sparse-tail + shared-Izh composition kept 100% task accuracy but missed the strict numerical gate (~2.87% prediction relative-L2). U4D localized the miss to the K-side Izh / normalized H-g readout; the sparse Output/FFN tail did not amplify the error.
+The state contains persistent H/g plus cached Q-feature, K-feature, V and per-token contribution weights. If an explicit changed-token mask is not supplied, the block infers token changes from the cached previous input. Reset is deterministic.
 
-### U4E — wider/clamp-aware shared scalar calibration
-Improved the interface but did not close the gate:
-- Q-only ~0.87% rel-L2 — PASS
-- K-only ~1.87% rel-L2 — FAIL
-- Q+K ~2.40% rel-L2 — FAIL
-
-Conclusion: a single shared Q decoder and a single shared K decoder are too restrictive for this sparse-trained head distribution.
-
-### U4F — gradient attention-aware decoder calibration
-NEGATIVE CONTROL / DO NOT USE. The unconstrained gradient calibration was numerically unstable and diverged badly. It is retained to document that downstream fitting of the decoder is not automatically safe.
-
-### U4G — stable per-head operating-point calibration
-PASS and now frozen as the neuronal feature interface for this lightweight block.
-
-Each attention head keeps the same Izh RS -> membrane trajectory -> fixed linear decoder interface, but may use its own fixed bias/gain/window and decoder. No task labels, task-model weights, attention weights, or sparse-tail connectivity are changed during interface selection.
-
-Selected operating points:
-- Q head 0: bias 5.0, gain 0.75, window 24 ms
-- Q head 1: bias 4.0, gain 0.75, window 20 ms
-- K head 0: bias 3.0, gain 0.25, window 24 ms
-- K head 1: bias 2.0, gain 0.25, window 20 ms
-
-Held-out integrated result:
-- prediction rel-L2 = 0.009150 (~0.915%)
-- prediction cosine = 0.9999696
-- reference task sign accuracy = 100%
-- candidate task sign accuracy = 100%
-- H rel-L2 ~0.482%
-- g rel-L2 ~0.427%
-- sparse-tail effective fraction remains <=30% gate
-
-All preregistered U4G gates PASS. The strict <=1% feature-interface integration issue is therefore closed for the lightweight block.
-
-## Current architecture status
+Canonical structure:
 
 ```text
 Input
-  -> event-cached Q/K/V projections                         [U2 proof PASS]
-  -> per-head calibrated Izh Q/K feature dynamics          [U4G PASS]
-  -> persistent H/g normalized linear attention            [PASS]
-  -> 25% structurally sparse output projection             [U4B PASS]
-  -> 25% structurally sparse FFN input connections         [U4B PASS]
-  -> thresholded hidden population (~64% active)
-  -> 25% structurally sparse FFN output connections        [U4B PASS]
-  -> residual / normalization
+  -> LayerNorm
+  -> event-cached Q/K/V projections
+  -> per-head calibrated Izh Q/K feature dynamics
+  -> persistent normalized H/g linear attention
+  -> 25% structurally sparse output projection
+  -> residual
+  -> LayerNorm
+  -> 25% structurally sparse FFN input
+  -> thresholded exact-zero hidden population
+  -> 25% structurally sparse FFN output
+  -> residual
+  -> Output + persistent state
 ```
 
-## Next gate
+### U5 integration results
 
-Proceed to a canonical full-block freeze/integration gate. The purpose is no longer to redesign individual operators, but to package the accepted operators behind one reusable `SNNTransformBlock` API and verify, in one run:
+Canonical packaging of the exact sparse reference is bit-equivalent in this gate:
+- block relative-L2 = 0
+- prediction relative-L2 = 0
 
-1. full-block numerical/task parity on held-out data;
-2. event-cached Q/K/V actually used in the canonical implementation, including Q;
-3. sparse-tail connectivity and hidden activity accounting;
-4. persistent-state API and deterministic state reset/carry behavior;
-5. one compact artifact/checkpoint that can be reused by downstream tasks.
+Per-head Izh integrated candidate on held-out retrieval data:
+- task prediction relative-L2 = 0.009714 (~0.971%) — PASS <=1%
+- task prediction cosine = 0.9999647
+- reference sign accuracy = 100%
+- candidate sign accuracy = 100%
+- H relative-L2 ~0.252%
+- g relative-L2 ~0.360%
 
-Scaling and SpiNNaker timing remain later stages; no hardware-speed claim is made from cloud SynOp proxies.
+Event execution:
+- Q evaluations: 768 -> 288 (-62.5%)
+- K evaluations: 768 -> 288 (-62.5%)
+- V evaluations: 768 -> 288 (-62.5%)
+- event-cache vs dense-projection reference: zero output/state error in the tested trajectory
+
+State API:
+- repeated fresh execution: exact match
+- reset vs fresh: exact match
+- inferred changed tokens: 32/32 correct in the gate
+- carry updates persistent H/g as expected
+
+Sparse tail:
+- static density = 25%
+- effective fraction ~21.38%
+- effective reduction ~78.62% under the tested hidden activity
+
+### Important numerical caveat
+The Izh candidate does **not** have <=1% parity for the entire hidden block representation. Held-out full block-output relative-L2 is ~5.29%, although block-output cosine remains ~0.99863. The <=1% gate is satisfied at the task/readout output and at H/g state, not at every internal channel.
+
+Therefore the correct claim is:
+
+> `SNNTransformBlock-v1` is a complete reusable functional/architectural block with accepted event Q/K/V, neuronal Q/K feature dynamics, persistent H/g attention, sparse output projection and sparse FFN. It is not yet a proof of <=1% equivalence for every internal hidden representation.
+
+### Artifact
+The U5 workflow emits:
+- `SNNTransformBlock_v1.pt`
+- `U5_RESULTS.json`
+- `run.log`
+
+Artifact name: `SNN_TRANSFORM_BLOCK_V1`.
+
+## Next stage
+
+The architecture itself should now be treated as frozen for the next experiment. Do not reopen operator design unless a downstream task exposes a specific failure.
+
+Next: plug `SNNTransformBlock-v1` into a small independent workload (associative/content retrieval plus tiny iterative masked generation) without changing the block internals. This tests whether the block is genuinely reusable rather than a one-task construction. Scaling and SpiNNaker mapping come after that downstream plug-in gate.
