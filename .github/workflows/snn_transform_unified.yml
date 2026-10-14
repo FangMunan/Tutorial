@@ -35,6 +35,7 @@ jobs:
           python -m py_compile unified_snn_transform/run_u3_trained_retrieval.py
           python -m py_compile unified_snn_transform/run_u3.py
           python -m py_compile unified_snn_transform/run_u31_izh_localization.py
+          python -m py_compile unified_snn_transform/run_u3b_selective_state.py
 
       - name: Run U0-U1 unified lightweight gate
         run: |
@@ -74,46 +75,60 @@ jobs:
             --window-penalty 0.00001 --seed 17 --threads 4 \
             | tee unified_snn_transform/run/U31/run.log
 
+      - name: Run U3B selective-state functional gate
+        run: |
+          mkdir -p unified_snn_transform/run/U3B
+          python unified_snn_transform/run_u3b_selective_state.py \
+            --out unified_snn_transform/run/U3B \
+            --tokens 16 --d 32 --heads 2 --features 32 --ff 64 \
+            --value-dim 8 --nkeys 4 --reset-amp 8 \
+            --train-steps 1200 --train-batch 128 --lr 0.002 --report-every 200 \
+            --eval-batches 8 --eval-batch 128 --seed 23 --threads 4 \
+            | tee unified_snn_transform/run/U3B/run.log
+
       - name: Show summaries
         if: always()
         run: |
           python - <<'PY'
           import json, os
-          for name,path in [
+          files=[
               ('U0_U1','unified_snn_transform/run/U0_U1/UNIFIED_RESULTS.json'),
               ('U2','unified_snn_transform/run/U2/U2_RESULTS.json'),
               ('U3','unified_snn_transform/run/U3/U3_RESULTS.json'),
-              ('U31','unified_snn_transform/run/U31/U31_RESULTS.json')]:
-              if os.path.exists(path):
-                  d=json.load(open(path))
-                  print('\n===',name,'===')
-                  if name=='U31':
-                      keep={'stage':d.get('stage'),'gates':d.get('gates'),'PASS':d.get('PASS'),
-                            'old_interface_localization':d.get('old_interface_localization'),
-                            'selected_Q':d.get('expanded_search',{}).get('selected_Q'),
-                            'selected_K':d.get('expanded_search',{}).get('selected_K'),
-                            'new_interface_localization':d.get('new_interface_localization'),
-                            'heldout_QK':d.get('heldout_QK'),'decision':d.get('decision')}
-                  else:
-                      keep={'stage':d.get('stage'),'gates':d.get('gates'),'PASS':d.get('PASS')}
-                      if name=='U0_U1':
-                          keep.update(summary=d.get('summary'),compute=d.get('compute'),calibration=d.get('calibration'))
-                      elif name=='U2':
-                          keep.update(q=d.get('q'),k=d.get('k'),v=d.get('v'),decision=d.get('decision'))
-                      else:
-                          keep.update(reference_task=d.get('reference_task'),
-                                      shuffled_binding_control=d.get('shuffled_binding_control'),
-                                      binding_sign_accuracy_drop=d.get('binding_sign_accuracy_drop'),
-                                      izh_parity=d.get('izh_parity'),
-                                      density_summary=d.get('trajectory_audit',{}).get('density_summary'),
-                                      decision=d.get('decision'))
-                  print(json.dumps(keep,indent=2))
+              ('U31','unified_snn_transform/run/U31/U31_RESULTS.json'),
+              ('U3B','unified_snn_transform/run/U3B/U3B_RESULTS.json')]
+          for name,path in files:
+              if not os.path.exists(path): continue
+              d=json.load(open(path));print('\n===',name,'===')
+              if name=='U3B':
+                  keep={'stage':d.get('stage'),'PASS':d.get('PASS'),'gates':d.get('gates'),
+                        'selective_eval':d.get('selective_eval'),'selective_identity_ablation':d.get('selective_identity_ablation'),
+                        'matched_fixed_eval':d.get('matched_fixed_eval'),'post_reset_selective_advantage':d.get('post_reset_selective_advantage'),
+                        'alpha_selectivity_gap':d.get('alpha_selectivity_gap'),'decision':d.get('decision')}
+              elif name=='U31':
+                  keep={'stage':d.get('stage'),'gates':d.get('gates'),'PASS':d.get('PASS'),
+                        'selected_Q':d.get('expanded_search',{}).get('selected_Q'),
+                        'selected_K':d.get('expanded_search',{}).get('selected_K'),
+                        'heldout_QK':d.get('heldout_QK'),'decision':d.get('decision')}
+              elif name=='U3':
+                  keep={'stage':d.get('stage'),'gates':d.get('gates'),'PASS':d.get('PASS'),
+                        'reference_task':d.get('reference_task'),'shuffled_binding_control':d.get('shuffled_binding_control'),
+                        'binding_sign_accuracy_drop':d.get('binding_sign_accuracy_drop'),
+                        'izh_parity':d.get('izh_parity'),'density_summary':d.get('trajectory_audit',{}).get('density_summary'),
+                        'decision':d.get('decision')}
+              elif name=='U2':
+                  keep={'stage':d.get('stage'),'gates':d.get('gates'),'PASS':d.get('PASS'),
+                        'q':d.get('q'),'k':d.get('k'),'v':d.get('v'),'decision':d.get('decision')}
+              else:
+                  keep={'stage':d.get('stage'),'gates':d.get('gates'),'PASS':d.get('PASS'),
+                        'summary':d.get('summary'),'compute':d.get('compute'),'calibration':d.get('calibration')}
+              print(json.dumps(keep,indent=2))
           PY
 
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SNN_TRANSFORM_UNIFIED_U0_U31
+          name: SNN_TRANSFORM_UNIFIED_U0_U3B
           path: unified_snn_transform/run
           retention-days: 30
