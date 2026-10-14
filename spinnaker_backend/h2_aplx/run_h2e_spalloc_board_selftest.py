@@ -1,27 +1,33 @@
 #!/usr/bin/env python3
 """H2E-board: run the H2 arithmetic APLX on one real SpiNNaker core via spalloc.
 
-This is the primary board runner for the Manchester setup.  It reuses the
-machine/spalloc settings already present in ``~/.spynnaker.cfg`` and creates a
-minimal temporary ``spiNNakerGraphFrontEnd.cfg`` understood by
-SpiNNakerGraphFrontEnd.  No credentials are printed or written to the result
-JSON.
+Primary Manchester route.  The runner reuses the machine/spalloc settings from
+the already-working ``~/.spynnaker.cfg`` but does *not* require the user to
+maintain a second permanent GraphFrontEnd config.
+
+SpiNNakerGraphFrontEnd 7.4.1 has an important configuration rule: before it
+reads a run-local ``spiNNakerGraphFrontEnd.cfg``, it insists that a user config
+named ``~/.spiNNakerGraphFrontEnd.cfg`` exists.  A local file alone is therefore
+insufficient and triggers ``NoConfigFoundException``.  To keep this board test
+self-contained and non-invasive, this script creates an isolated temporary
+HOME inside the run directory, writes the required hidden user config there,
+and temporarily points HOME/XDG_CONFIG_HOME at it only while GraphFrontEnd is
+running.  The user's real home configuration is never overwritten.
 
 The custom APLX is represented as one machine vertex with
 ``ExecutableType.SYNC``.  The binary waits at SYNC0, runs the arithmetic test,
 writes an IOBUF PASS/FAIL line plus four VCPU user-register signatures, then
-calls ``spin1_exit``.  The front end therefore owns allocation, loading, start
-barrier, completion detection and cleanup.
+calls ``spin1_exit``.
 
-PASS requires *both* the current-run IOBUF token and matching VCPU signatures:
+PASS requires the current-run IOBUF token and matching VCPU signatures:
 
     user0 = 0x48324531 (H2E1 magic)
     user1 = 0          (self-test return code)
     user2 = chip_id
     user3 = (core_id << 16) | app_id
 
-A PASS here proves physical one-core execution of the H2 arithmetic self-test.
-It is not yet the H2F full frozen-HIR resident-block board test.
+A PASS proves physical one-core execution of the H2 arithmetic self-test.  It
+is not yet the H2F full frozen-HIR resident-block board test.
 """
 from __future__ import annotations
 
@@ -31,7 +37,6 @@ import importlib.metadata
 import json
 import os
 import shutil
-import sys
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +46,7 @@ PASS_TOKEN = "SNN_TRANSFORM_H2_APLX_SELFTEST PASS"
 FAIL_TOKEN = "SNN_TRANSFORM_H2_APLX_SELFTEST FAIL"
 MAGIC = 0x48324531
 GFE_CFG = "spiNNakerGraphFrontEnd.cfg"
+HIDDEN_GFE_CFG = f".{GFE_CFG}"
 
 # Only copy options shared by SpiNNMan/GFE.  Copying the whole PyNN config can
 # fail GFE's strict local-config validation because PyNN has extra sections.
@@ -88,7 +94,8 @@ def _read_source_machine_config(path: Path) -> dict[str, str]:
 
     server = out.get("spalloc_server", "None")
     machine = out.get("machineName", "None")
-    virtual = out.get("virtual_board", "False").lower() in {"1", "true", "yes", "on"}
+    virtual = out.get("virtual_board", "False").lower() in {
+        "1", "true", "yes", "on"}
     use_spalloc = server.lower() not in {"", "none"}
     use_direct = machine.lower() not in {"", "none"}
     if virtual:
@@ -101,15 +108,19 @@ def _read_source_machine_config(path: Path) -> dict[str, str]:
     return out
 
 
-def _write_gfe_cfg(run_dir: Path, machine_cfg: dict[str, str]) -> Path:
-    # Keep secrets only in the ephemeral/local run directory.  The result JSON
-    # intentionally omits spalloc_user.  The file itself is mode 0600.
-    cfg = run_dir / GFE_CFG
+def _machine_cfg_text(machine_cfg: dict[str, str]) -> str:
     lines = ["[Machine]"]
     for canonical, _ in _MACHINE_KEYS:
         if canonical in machine_cfg:
             lines.append(f"{canonical} = {machine_cfg[canonical]}")
-    cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return "\n".join(lines) + "\n"
+
+
+def _write_gfe_cfg(run_dir: Path, machine_cfg: dict[str, str]) -> Path:
+    # Run-local config.  GraphFrontEnd reads this strictly *after* it has found
+    # a user config in HOME, hence the isolated HOME prepared below as well.
+    cfg = run_dir / GFE_CFG
+    cfg.write_text(_machine_cfg_text(machine_cfg), encoding="utf-8")
     try:
         cfg.chmod(0o600)
     except OSError:
@@ -117,23 +128,54 @@ def _write_gfe_cfg(run_dir: Path, machine_cfg: dict[str, str]) -> Path:
     return cfg
 
 
+def _prepare_isolated_gfe_home(
+        run_dir: Path, machine_cfg: dict[str, str]) -> tuple[Path, Path]:
+    """Create the hidden GFE user config required by GraphFrontEnd 7.4.1.
+
+    The directory is deliberately inside the run output so no permanent file is
+    written to the user's real HOME.  XDG_CONFIG_HOME is also redirected while
+    the frontend is active so config discovery cannot accidentally pick another
+    user-level GraphFrontEnd config.
+    """
+    cfg_home = run_dir / "_gfe_home"
+    xdg_home = cfg_home / ".config"
+    xdg_home.mkdir(parents=True, exist_ok=True)
+    hidden_cfg = cfg_home / HIDDEN_GFE_CFG
+    hidden_cfg.write_text(_machine_cfg_text(machine_cfg), encoding="utf-8")
+    try:
+        hidden_cfg.chmod(0o600)
+    except OSError:
+        pass
+    return cfg_home, hidden_cfg
+
+
 def _safe_machine_summary(machine_cfg: dict[str, str]) -> dict[str, Any]:
     server = machine_cfg.get("spalloc_server", "None")
     machine = machine_cfg.get("machineName", "None")
     return {
-        "route": "spalloc" if server.lower() not in {"", "none"} else "direct_frontend",
-        "spalloc_server": None if server.lower() in {"", "none"} else server,
+        "route": (
+            "spalloc" if server.lower() not in {"", "none"}
+            else "direct_frontend"),
+        "spalloc_server": (
+            None if server.lower() in {"", "none"} else server),
         "spalloc_port": machine_cfg.get("spalloc_port"),
-        "machineName": None if machine.lower() in {"", "none"} else machine,
-        "spalloc_user_configured": machine_cfg.get("spalloc_user", "None").lower() not in {"", "none"},
-        "spalloc_group_configured": machine_cfg.get("spalloc_group", "None").lower() not in {"", "none"},
+        "machineName": (
+            None if machine.lower() in {"", "none"} else machine),
+        "version": machine_cfg.get("version"),
+        "spalloc_user_configured": (
+            machine_cfg.get("spalloc_user", "None").lower()
+            not in {"", "none"}),
+        "spalloc_group_configured": (
+            machine_cfg.get("spalloc_group", "None").lower()
+            not in {"", "none"}),
     }
 
 
-def _run_frontend(run_dir: Path, n_boards: int) -> dict[str, Any]:
-    # Imports are intentionally delayed until after the temporary GFE config is
-    # in place and cwd has changed.  This also makes `python -m py_compile` work
-    # on machines without the SpiNNaker Python stack.
+def _run_frontend(run_dir: Path, n_boards: int, cfg_home: Path) -> dict[str, Any]:
+    # Imports are delayed so `python -m py_compile` remains possible on systems
+    # without the SpiNNaker Python stack.  The GraphFrontEnd constructor itself
+    # resets configuration and then looks for ~/.spiNNakerGraphFrontEnd.cfg, so
+    # HOME must be redirected before front_end.setup() is called.
     try:
         from spinn_utilities.overrides import overrides
         from spinn_machine import CoreSubsets
@@ -153,7 +195,6 @@ def _run_frontend(run_dir: Path, n_boards: int) -> dict[str, Any]:
 
     class H2EBoardVertex(SimpleMachineVertex, AbstractHasAssociatedBinary):
         def __init__(self) -> None:
-            # The raw self-test has no data-specification regions.
             super().__init__(ConstantSDRAM(0), label="H2E arithmetic self-test")
 
         @overrides(AbstractHasAssociatedBinary.get_binary_file_name)
@@ -162,14 +203,18 @@ def _run_frontend(run_dir: Path, n_boards: int) -> dict[str, Any]:
 
         @overrides(AbstractHasAssociatedBinary.get_binary_start_type)
         def get_binary_start_type(self):
-            # Matches spin1_start(SYNC_WAIT) in snn_transform_h2.c.
             return ExecutableType.SYNC
 
     old_cwd = Path.cwd()
+    old_home = os.environ.get("HOME")
+    old_xdg = os.environ.get("XDG_CONFIG_HOME")
     vertex = H2EBoardVertex()
     setup_done = False
     try:
         os.chdir(run_dir)
+        os.environ["HOME"] = str(cfg_home)
+        os.environ["XDG_CONFIG_HOME"] = str(cfg_home / ".config")
+
         front_end.setup(
             n_boards_required=n_boards,
             model_binary_folder=str(run_dir),
@@ -191,10 +236,18 @@ def _run_frontend(run_dir: Path, n_boards: int) -> dict[str, Any]:
         iobuf = "\n".join(buf.iobuf for buf in buffers)
 
         regs = {
-            "user0": int(txrx.read_user(placement.x, placement.y, placement.p, UserRegister.USER_0)),
-            "user1": int(txrx.read_user(placement.x, placement.y, placement.p, UserRegister.USER_1)),
-            "user2": int(txrx.read_user(placement.x, placement.y, placement.p, UserRegister.USER_2)),
-            "user3": int(txrx.read_user(placement.x, placement.y, placement.p, UserRegister.USER_3)),
+            "user0": int(txrx.read_user(
+                placement.x, placement.y, placement.p,
+                UserRegister.USER_0)),
+            "user1": int(txrx.read_user(
+                placement.x, placement.y, placement.p,
+                UserRegister.USER_1)),
+            "user2": int(txrx.read_user(
+                placement.x, placement.y, placement.p,
+                UserRegister.USER_2)),
+            "user3": int(txrx.read_user(
+                placement.x, placement.y, placement.p,
+                UserRegister.USER_3)),
         }
         expected_chip = (int(placement.x) << 8) | int(placement.y)
         expected_user3 = (int(placement.p) << 16) | (app_id & 0xFFFF)
@@ -232,6 +285,14 @@ def _run_frontend(run_dir: Path, n_boards: int) -> dict[str, Any]:
                 # release a Manchester spalloc allocation.
                 traceback.print_exc()
         os.chdir(old_cwd)
+        if old_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = old_home
+        if old_xdg is None:
+            os.environ.pop("XDG_CONFIG_HOME", None)
+        else:
+            os.environ["XDG_CONFIG_HOME"] = old_xdg
 
 
 def main() -> None:
@@ -243,9 +304,12 @@ def main() -> None:
     ap.add_argument(
         "--source-config", type=Path,
         default=Path.home() / ".spynnaker.cfg",
-        help="working sPyNNaker config; only compatible [Machine] options are copied")
-    ap.add_argument("--n-boards", type=int, default=1,
-                    help="spalloc allocation size; one board is sufficient")
+        help=(
+            "working sPyNNaker config; only compatible [Machine] options "
+            "are copied"))
+    ap.add_argument(
+        "--n-boards", type=int, default=1,
+        help="spalloc allocation size; one board is sufficient")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
@@ -270,6 +334,7 @@ def main() -> None:
 
     machine_cfg = _read_source_machine_config(source_cfg)
     local_cfg = _write_gfe_cfg(run_dir, machine_cfg)
+    cfg_home, hidden_cfg = _prepare_isolated_gfe_home(run_dir, machine_cfg)
     safe_machine = _safe_machine_summary(machine_cfg)
 
     base_record: dict[str, Any] = {
@@ -281,6 +346,8 @@ def main() -> None:
         "aplx_size_bytes": staged_aplx.stat().st_size,
         "source_config": str(source_cfg),
         "generated_gfe_config": str(local_cfg),
+        "isolated_gfe_home": str(cfg_home),
+        "isolated_gfe_user_config": str(hidden_cfg),
         "machine": safe_machine,
         "requested_boards": args.n_boards,
         "software_versions": {
@@ -300,7 +367,7 @@ def main() -> None:
 
     result_path = run_dir / "H2E_SPALLOC_BOARD_SELFTEST.json"
     try:
-        runtime = _run_frontend(run_dir, args.n_boards)
+        runtime = _run_frontend(run_dir, args.n_boards, cfg_home)
         iobuf = runtime.pop("iobuf")
         (run_dir / "core_iobuf.txt").write_text(iobuf, encoding="utf-8")
         base_record.update(runtime)
@@ -312,11 +379,13 @@ def main() -> None:
             "exception": str(exc),
             "traceback": traceback.format_exc(),
         })
-        result_path.write_text(json.dumps(base_record, indent=2), encoding="utf-8")
+        result_path.write_text(
+            json.dumps(base_record, indent=2), encoding="utf-8")
         print(json.dumps(base_record, indent=2))
         raise SystemExit(2) from exc
 
-    result_path.write_text(json.dumps(base_record, indent=2), encoding="utf-8")
+    result_path.write_text(
+        json.dumps(base_record, indent=2), encoding="utf-8")
     print(json.dumps(base_record, indent=2))
     if not base_record["PASS"]:
         raise SystemExit(2)
