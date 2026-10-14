@@ -52,7 +52,6 @@ int32_t h2_div_scaled_round_i64(int64_t num, int64_t den, unsigned shift) {
     uint64_t q = n / d;
     uint64_t r = n % d;
 
-    /* Build fractional bits without ever evaluating r<<shift in one step. */
     uint64_t frac = 0;
     for (unsigned i = 0; i < shift; ++i) {
         r <<= 1;
@@ -63,7 +62,6 @@ int32_t h2_div_scaled_round_i64(int64_t num, int64_t den, unsigned shift) {
         }
     }
 
-    /* Round the final binary fraction to nearest, ties away from zero. */
     if (r >= ((d + 1u) >> 1)) {
         ++frac;
         if (shift < 63 && frac == ((uint64_t)1 << shift)) {
@@ -177,7 +175,7 @@ void h2_stable_a_q20(
     int is_query,
     int32_t *out) {
 
-    const int64_t lo = -(int64_t)30 << H2_F_ACT;
+    const int64_t lo = -((int64_t)30 << H2_F_ACT);
     const int64_t hi = (int64_t)30 << H2_F_ACT;
 
     for (uint32_t n = 0; n < tokens; ++n) {
@@ -235,9 +233,9 @@ void h2_izh_decode_q20(
 
     if (out_frac > H2_F_MEM + H2_F_DEC) return;
     const int64_t s_mem = (int64_t)1 << H2_F_MEM;
-    const int64_t c02v = 838861;  /* round(0.2 * 2^22) */
-    const int64_t c004 = 167772;  /* round(0.04 * 2^22) */
-    const int64_t c02 = 83886;    /* round(0.02 * 2^22) */
+    const int64_t c02v = 838861;
+    const int64_t c004 = 167772;
+    const int64_t c02 = 83886;
     const int64_t c140 = 140 * s_mem;
     const unsigned final_shift = H2_F_MEM + H2_F_DEC - out_frac;
 
