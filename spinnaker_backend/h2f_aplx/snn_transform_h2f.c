@@ -7,17 +7,38 @@
  *   - no host compute or hidden-state roundtrip occurs between steps;
  *   - only final y,H,g,pq,pk,v are written to the output SDRAM region;
  *   - host compares those final integer arrays bit-for-bit with the H2D oracle.
+ *
+ * The executed data-spec layout is intentionally decoded locally instead of
+ * linking SpiNNFrontEndCommon on target.  The host still uses the official
+ * GraphFrontEnd data-spec generator; this loader merely reads the documented
+ * metadata pointer placed in VCPU user0.  This keeps H2F dependent only on the
+ * same low-level SARK/spin1 toolchain already verified by H2E-board.
  */
 
 #include <sark.h>
 #include <stdint.h>
 #include <spin1_api.h>
-#include <data_specification.h>
 
 #include "../h2_aplx/h2_kernels.h"
 #include "h2f_contract.h"
 
 #define H2F_BOARD_MAGIC 0x48324642u  /* "H2FB" */
+#define DSE_MAGIC 0xAD130AD6u
+#define DSE_VERSION 0x00010000u
+#define H2F_EXPECTED_TRAJECTORY_WORDS 3168u
+#define H2F_EXPECTED_OUTPUT_WORDS 4168u
+
+typedef struct h2f_region_desc_s {
+    void *pointer;
+    uint32_t checksum;
+    uint32_t n_words;
+} h2f_region_desc_t;
+
+typedef struct h2f_dse_metadata_s {
+    uint32_t magic_number;
+    uint32_t version;
+    h2f_region_desc_t regions[];
+} h2f_dse_metadata_t;
 
 static const uint32_t *cfg;
 static const uint8_t *hir_blob;
@@ -294,12 +315,23 @@ static void run_full_block(uint unused0, uint unused1) {
 }
 
 static int initialise(void) {
-    data_specification_metadata_t *data = data_specification_get_data_address();
-    if (!data_specification_read_header(data)) return 30;
-    cfg = (const uint32_t *) data_specification_get_region(H2F_REGION_CONFIG, data);
-    hir_blob = (const uint8_t *) data_specification_get_region(H2F_REGION_HIR, data);
-    trajectory = (const uint32_t *) data_specification_get_region(H2F_REGION_TRAJECTORY, data);
-    output_region = (uint32_t *) data_specification_get_region(H2F_REGION_OUTPUT, data);
+    /* GraphFrontEnd's data-spec executor places this metadata pointer in VCPU
+     * user0 before starting the application.  Read and validate it locally. */
+    h2f_dse_metadata_t *data = (h2f_dse_metadata_t *) (uintptr_t) sark.vcpu->user0;
+    if (data == NULL || data->magic_number != DSE_MAGIC || data->version != DSE_VERSION) {
+        return 30;
+    }
+    for (uint32_t r = 0; r < 4; ++r) {
+        if (data->regions[r].pointer == NULL || data->regions[r].n_words == 0) return 32;
+    }
+    if (data->regions[H2F_REGION_CONFIG].n_words < H2F_HEADER_WORDS) return 33;
+    if (data->regions[H2F_REGION_TRAJECTORY].n_words < H2F_EXPECTED_TRAJECTORY_WORDS) return 34;
+    if (data->regions[H2F_REGION_OUTPUT].n_words < H2F_EXPECTED_OUTPUT_WORDS) return 35;
+
+    cfg = (const uint32_t *) data->regions[H2F_REGION_CONFIG].pointer;
+    hir_blob = (const uint8_t *) data->regions[H2F_REGION_HIR].pointer;
+    trajectory = (const uint32_t *) data->regions[H2F_REGION_TRAJECTORY].pointer;
+    output_region = (uint32_t *) data->regions[H2F_REGION_OUTPUT].pointer;
     int rc = validate_contract();
     if (rc != 0) return rc;
     return allocate_arena();
