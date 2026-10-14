@@ -17,6 +17,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Static-check board runners
+        run: |
+          python -m py_compile spinnaker_backend/h2_aplx/run_h2e_spalloc_board_selftest.py
+          python -m py_compile spinnaker_backend/h2_aplx/run_h2e_board_selftest.py
 
       - name: Install GNU Arm embedded toolchain
         run: |
@@ -45,7 +53,7 @@ jobs:
           ls -lh spinnaker_backend/h2_aplx/snn_transform_h2.aplx
           arm-none-eabi-nm spinnaker_backend/h2_aplx/build/gnu/snn_transform_h2.elf | grep ' c_main$'
 
-      - name: Upload H2E APLX image
+      - name: Upload H2E board-test bundle
         uses: actions/upload-artifact@v4
         with:
           name: SNN_TRANSFORM_H2E_APLX
@@ -53,4 +61,7 @@ jobs:
             spinnaker_backend/h2_aplx/snn_transform_h2.aplx
             spinnaker_backend/h2_aplx/build/gnu/snn_transform_h2.elf
             spinnaker_backend/h2_aplx/build/gnu/snn_transform_h2.txt
+            spinnaker_backend/h2_aplx/run_h2e_spalloc_board_selftest.py
+            spinnaker_backend/h2_aplx/run_h2e_board_selftest.py
+            spinnaker_backend/h2_aplx/H2E_BOARD_TEST.md
           retention-days: 30
