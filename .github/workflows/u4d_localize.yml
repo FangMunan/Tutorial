@@ -1,0 +1,49 @@
+name: SNN Transform U4D Localize Composition
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - snn-transform-u4-sparse-tail-20261014
+    paths:
+      - 'unified_snn_transform/run_u4d_localize_composition.py'
+      - '.github/workflows/u4d_localize.yml'
+
+jobs:
+  u4d:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Compile
+        run: python -m py_compile unified_snn_transform/run_u4d_localize_composition.py
+      - name: Run U4D localization
+        run: |
+          mkdir -p unified_snn_transform/run/U4D
+          python unified_snn_transform/run_u4d_localize_composition.py \
+            --out unified_snn_transform/run/U4D \
+            --tokens 16 --d 32 --heads 2 --features 32 --ff 64 --value-dim 8 \
+            --train-steps 900 --train-batch 128 --eval-batches 8 --eval-batch 64 \
+            --topn 12 --seed 71 --threads 4 | tee unified_snn_transform/run/U4D/run.log
+      - name: Show summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json,os
+          p='unified_snn_transform/run/U4D/U4D_RESULTS.json'
+          if os.path.exists(p):
+              d=json.load(open(p)); print(json.dumps({'stage':d['stage'],'cases':d['cases'],'amplification':d['amplification']},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: SNN_TRANSFORM_U4D_LOCALIZATION
+          path: unified_snn_transform/run/U4D
+          retention-days: 30
