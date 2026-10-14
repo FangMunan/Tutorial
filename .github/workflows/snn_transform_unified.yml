@@ -12,63 +12,53 @@ on:
 jobs:
   unified-gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install CPU dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install numpy
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-
       - name: Compile current unified gate
         run: |
           python -m py_compile unified_snn_transform/run_unified_gate.py
           python -m py_compile unified_snn_transform/run_u3br_selective_state_repair.py
-
-      - name: Run U3B-R repaired selective-state gate
+          python -m py_compile unified_snn_transform/run_u3br2_event_state.py
+      - name: Run U3B-R2 event-state gate
         run: |
-          mkdir -p unified_snn_transform/run/U3BR
-          python unified_snn_transform/run_u3br_selective_state_repair.py \
-            --out unified_snn_transform/run/U3BR \
+          mkdir -p unified_snn_transform/run/U3BR2
+          python unified_snn_transform/run_u3br2_event_state.py \
+            --out unified_snn_transform/run/U3BR2 \
             --tokens 16 --d 32 --heads 2 --features 32 --ff 64 \
             --value-dim 8 --nkeys 4 --control-amp 1.0 \
-            --base-steps 500 --gate-steps 350 --batch 96 \
+            --base-steps 350 --gate-steps 350 --batch 96 \
             --base-lr 0.002 --gate-lr 0.02 --alpha-reg 0.05 --report-every 100 \
             --eval-batches 6 --eval-batch 128 \
             --base-gate 0.90 --task-gate 0.90 --oracle-gap 0.15 --selective-gap 0.10 \
-            --seed 31 --threads 4 | tee unified_snn_transform/run/U3BR/run.log
-
-      - name: Show U3B-R summary
+            --seed 37 --threads 4 | tee unified_snn_transform/run/U3BR2/run.log
+      - name: Show U3B-R2 summary
         if: always()
         run: |
           python - <<'PY'
           import json, os
-          p='unified_snn_transform/run/U3BR/U3BR_RESULTS.json'
+          p='unified_snn_transform/run/U3BR2/U3BR2_RESULTS.json'
           if os.path.exists(p):
               d=json.load(open(p))
-              print(json.dumps({
-                  'stage':d.get('stage'),'PASS':d.get('PASS'),'gates':d.get('gates'),
-                  'base_identity_eval':d.get('base_identity_eval'),
-                  'oracle_reset_eval':d.get('oracle_reset_eval'),'identity_eval':d.get('identity_eval'),
-                  'selective_eval':d.get('selective_eval'),'fixed_eval':d.get('fixed_eval'),
-                  'selective_identity_ablation':d.get('selective_identity_ablation'),
-                  'alpha_selectivity_gap':d.get('alpha_selectivity_gap'),
-                  'post_reset_selective_advantage':d.get('post_reset_selective_advantage'),
-                  'decision':d.get('decision')}, indent=2))
+              print(json.dumps({k:d.get(k) for k in [
+                  'stage','PASS','gates','base_identity_eval','oracle_reset_eval','identity_eval',
+                  'selective_eval','fixed_eval','selective_identity_ablation','alpha_selectivity_gap',
+                  'post_reset_selective_advantage','decision']},indent=2))
           PY
-
       - name: Upload current results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SNN_TRANSFORM_UNIFIED_U3BR
-          path: unified_snn_transform/run/U3BR
+          name: SNN_TRANSFORM_UNIFIED_U3BR2
+          path: unified_snn_transform/run/U3BR2
           retention-days: 30
