@@ -4,10 +4,16 @@
  * This is intentionally a one-core arithmetic self-test, not yet a claim that
  * the full frozen-HIR block has run on SpiNNaker.  It validates that the same C
  * kernels used by the H2D host parity gate execute on the ARM968 target.
+ *
+ * The application uses the standard SpiNNaker SYNC_WAIT start barrier.  This
+ * avoids a race where a tiny raw c_main() could finish before the host front-end
+ * had observed its RUNNING state.  After SYNC0 the scheduled callback performs
+ * the tests, writes the result into VCPU user registers + IOBUF, and exits.
  */
 
 #include <sark.h>
 #include <stdint.h>
+#include "spin1_api.h"
 
 #include "h2_kernels.h"
 
@@ -35,7 +41,8 @@ static int self_test(void) {
     const int32_t pq[1] = {1 << H2_F_PQ};
     int32_t attended[1] = {0};
     h2_attention_read(pq, H, g, 1, 1, 1, 1, attended);
-    const int32_t expected = h2_div_scaled_round_i64(H[0], g[0], H2_F_ACT + H2_F_PK - H2_F_H);
+    const int32_t expected = h2_div_scaled_round_i64(
+        H[0], g[0], H2_F_ACT + H2_F_PK - H2_F_H);
     if (attended[0] != expected) return 6;
 
     /* Sparse Q20 linear identity on one scalar. */
@@ -51,7 +58,10 @@ static int self_test(void) {
     return 0;
 }
 
-void c_main(void) {
+static void run_self_test(uint unused0, uint unused1) {
+    use(unused0);
+    use(unused1);
+
     const uint chip = sark_chip_id();
     const uint core = sark_core_id();
     const uint app = sark_app_id();
@@ -72,4 +82,19 @@ void c_main(void) {
             "SNN_TRANSFORM_H2_APLX_SELFTEST FAIL rc=%d chip=0x%04x core=%u app=%u\n",
             rc, chip, core, app);
     }
+
+    spin1_exit((uint) rc);
+}
+
+void c_main(void) {
+    /* Queue the work now; it will execute only after the host sends SYNC0. */
+    if (!spin1_schedule_callback(run_self_test, 0, 0, 1)) {
+        sark.vcpu->user0 = H2E_BOARD_MAGIC;
+        sark.vcpu->user1 = 8;
+        io_printf(IO_BUF,
+            "SNN_TRANSFORM_H2_APLX_SELFTEST FAIL rc=8 callback_schedule\n");
+        return;
+    }
+
+    spin1_start(SYNC_WAIT);
 }
