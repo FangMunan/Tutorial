@@ -1,11 +1,11 @@
 # H2F full resident block APLX.
-# Requires the SpiNNaker low-level tools plus installed SpiNNFrontEndCommon
-# C library/headers (data_specification.h, libspinn_frontend_common.a).
+# Target code depends only on the same low-level SARK/spin1 toolchain already
+# verified by H2E-board. The standard executed data-spec metadata is decoded
+# locally from VCPU user0.
 
 APP := snn_transform_h2f
 OBJECTS = $(BUILD_DIR)snn_transform_h2f.o $(BUILD_DIR)h2_kernels.o
 CFLAGS += -I../h2_aplx
-LDFLAGS += -lspinn_frontend_common
 
 ifdef SPINN_DIRS
 include $(SPINN_DIRS)/make/app.make
