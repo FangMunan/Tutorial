@@ -59,8 +59,8 @@ static int self_test(void) {
 }
 
 static void run_self_test(uint unused0, uint unused1) {
-    use(unused0);
-    use(unused1);
+    (void) unused0;
+    (void) unused1;
 
     const uint chip = sark_chip_id();
     const uint core = sark_core_id();
