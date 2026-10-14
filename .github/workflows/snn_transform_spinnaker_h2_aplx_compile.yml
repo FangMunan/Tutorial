@@ -1,0 +1,54 @@
+name: SNN Transform SpiNNaker H2E APLX Compile
+
+on:
+  push:
+    branches:
+      - snn-transform-spinnaker-h0-h1-20261014
+    paths:
+      - 'spinnaker_backend/h2_aplx/**'
+      - '.github/workflows/snn_transform_spinnaker_h2_aplx_compile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  h2e_aplx_compile:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GNU Arm embedded toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi make perl git
+          arm-none-eabi-gcc --version
+
+      - name: Checkout pinned SpiNNaker low-level tools
+        run: |
+          git clone https://github.com/SpiNNakerManchester/spinnaker_tools.git /tmp/spinnaker_tools
+          git -C /tmp/spinnaker_tools checkout 619bd2b0726e970a8500079b5542e745200e62be
+          git -C /tmp/spinnaker_tools rev-parse HEAD
+
+      - name: Build SARK and spin1_api with GNU ARM tools
+        run: |
+          make -C /tmp/spinnaker_tools GNU=1
+
+      - name: Cross-compile H2 APLX
+        env:
+          SPINN_DIRS: /tmp/spinnaker_tools
+        run: |
+          make -C spinnaker_backend/h2_aplx GNU=1 DEBUG=0
+          test -s spinnaker_backend/h2_aplx/snn_transform_h2.aplx
+          ls -lh spinnaker_backend/h2_aplx/snn_transform_h2.aplx
+          arm-none-eabi-nm spinnaker_backend/h2_aplx/build/gnu/snn_transform_h2.elf | grep ' c_main$'
+
+      - name: Upload H2E APLX image
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_H2E_APLX
+          path: |
+            spinnaker_backend/h2_aplx/snn_transform_h2.aplx
+            spinnaker_backend/h2_aplx/build/gnu/snn_transform_h2.elf
+            spinnaker_backend/h2_aplx/build/gnu/snn_transform_h2.txt
+          retention-days: 30
