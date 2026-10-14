@@ -25,40 +25,47 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install numpy
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - name: Compile current unified gate
+      - name: Compile current unified gates
         run: |
           python -m py_compile unified_snn_transform/run_unified_gate.py
+          python -m py_compile unified_snn_transform/core_v2.py
+          python -m py_compile unified_snn_transform/run_u21_batch_isolation.py
           python -m py_compile unified_snn_transform/run_u3br_selective_state_repair.py
           python -m py_compile unified_snn_transform/run_u3br2_event_state.py
-      - name: Run U3B-R2 event-state gate
+          python -m py_compile unified_snn_transform/run_u3br3_corev2.py
+      - name: Run U2.1 persistent batch-isolation regression
         run: |
-          mkdir -p unified_snn_transform/run/U3BR2
-          python unified_snn_transform/run_u3br2_event_state.py \
-            --out unified_snn_transform/run/U3BR2 \
+          mkdir -p unified_snn_transform/run/U21
+          python unified_snn_transform/run_u21_batch_isolation.py \
+            --out unified_snn_transform/run/U21 --batch 4 --tokens 16 --d 32 --heads 2 --features 32 --steps 5 --seed 41 \
+            | tee unified_snn_transform/run/U21/run.log
+      - name: Run U3B-R3 on corrected core v2
+        run: |
+          mkdir -p unified_snn_transform/run/U3BR3
+          python unified_snn_transform/run_u3br3_corev2.py \
+            --out unified_snn_transform/run/U3BR3 \
             --tokens 16 --d 32 --heads 2 --features 32 --ff 64 \
             --value-dim 8 --nkeys 4 --control-amp 1.0 \
-            --base-steps 350 --gate-steps 350 --batch 96 \
-            --base-lr 0.002 --gate-lr 0.02 --alpha-reg 0.05 --report-every 100 \
+            --base-steps 500 --gate-steps 400 --batch 96 \
+            --base-lr 0.002 --gate-lr 0.01 --alpha-reg 0.05 --report-every 100 \
             --eval-batches 6 --eval-batch 128 \
             --base-gate 0.90 --task-gate 0.90 --oracle-gap 0.15 --selective-gap 0.10 \
-            --seed 37 --threads 4 | tee unified_snn_transform/run/U3BR2/run.log
-      - name: Show U3B-R2 summary
+            --seed 43 --threads 4 | tee unified_snn_transform/run/U3BR3/run.log
+      - name: Show current summaries
         if: always()
         run: |
           python - <<'PY'
-          import json, os
-          p='unified_snn_transform/run/U3BR2/U3BR2_RESULTS.json'
-          if os.path.exists(p):
-              d=json.load(open(p))
-              print(json.dumps({k:d.get(k) for k in [
-                  'stage','PASS','gates','base_identity_eval','oracle_reset_eval','identity_eval',
-                  'selective_eval','fixed_eval','selective_identity_ablation','alpha_selectivity_gap',
-                  'post_reset_selective_advantage','decision']},indent=2))
+          import json,os
+          for name,p in [('U21','unified_snn_transform/run/U21/U21_RESULTS.json'),('U3BR3','unified_snn_transform/run/U3BR3/U3BR3_RESULTS.json')]:
+              if os.path.exists(p):
+                  d=json.load(open(p));print('\n===',name,'===');print(json.dumps(d,indent=2))
           PY
       - name: Upload current results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SNN_TRANSFORM_UNIFIED_U3BR2
-          path: unified_snn_transform/run/U3BR2
+          name: SNN_TRANSFORM_UNIFIED_COREV2_U3BR3
+          path: |
+            unified_snn_transform/run/U21
+            unified_snn_transform/run/U3BR3
           retention-days: 30
