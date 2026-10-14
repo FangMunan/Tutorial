@@ -12,7 +12,7 @@ on:
 jobs:
   unified-gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,107 +28,47 @@ jobs:
           python -m pip install numpy
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
 
-      - name: Compile
+      - name: Compile current unified gate
         run: |
           python -m py_compile unified_snn_transform/run_unified_gate.py
-          python -m py_compile unified_snn_transform/run_u2_event_qkv.py
-          python -m py_compile unified_snn_transform/run_u3_trained_retrieval.py
-          python -m py_compile unified_snn_transform/run_u3.py
-          python -m py_compile unified_snn_transform/run_u31_izh_localization.py
-          python -m py_compile unified_snn_transform/run_u3b_selective_state.py
+          python -m py_compile unified_snn_transform/run_u3br_selective_state_repair.py
 
-      - name: Run U0-U1 unified lightweight gate
+      - name: Run U3B-R repaired selective-state gate
         run: |
-          mkdir -p unified_snn_transform/run/U0_U1
-          python unified_snn_transform/run_unified_gate.py \
-            --out unified_snn_transform/run/U0_U1 \
+          mkdir -p unified_snn_transform/run/U3BR
+          python unified_snn_transform/run_u3br_selective_state_repair.py \
+            --out unified_snn_transform/run/U3BR \
             --tokens 16 --d 32 --heads 2 --features 32 --ff 64 \
-            --steps 6 --batch 4 --change-frac 0.25 \
-            --seed 7 --threads 4 | tee unified_snn_transform/run/U0_U1/run.log
+            --value-dim 8 --nkeys 4 --control-amp 1.0 \
+            --base-steps 500 --gate-steps 350 --batch 96 \
+            --base-lr 0.002 --gate-lr 0.02 --alpha-reg 0.05 --report-every 100 \
+            --eval-batches 6 --eval-batch 128 \
+            --base-gate 0.90 --task-gate 0.90 --oracle-gap 0.15 --selective-gap 0.10 \
+            --seed 31 --threads 4 | tee unified_snn_transform/run/U3BR/run.log
 
-      - name: Run U2 event-cached QKV gate
-        run: |
-          mkdir -p unified_snn_transform/run/U2
-          python unified_snn_transform/run_u2_event_qkv.py \
-            --out unified_snn_transform/run/U2 \
-            --tokens 16 --d 32 --heads 2 --features 32 --ff 64 \
-            --steps 6 --batch 4 --change-frac 0.25 --eps 1e-5 \
-            --seed 7 --threads 4 | tee unified_snn_transform/run/U2/run.log
-
-      - name: Run U3 trained associative-retrieval gate
-        run: |
-          mkdir -p unified_snn_transform/run/U3
-          python unified_snn_transform/run_u3.py \
-            --out unified_snn_transform/run/U3 \
-            --tokens 16 --d 32 --heads 2 --features 32 --ff 64 --value-dim 8 \
-            --train-steps 800 --train-batch 128 --lr 0.002 --report-every 100 \
-            --eval-batches 8 --eval-batch 128 --trajectory-steps 6 --audit-batch 64 \
-            --task-gate 0.85 --seed 7 --threads 4 | tee unified_snn_transform/run/U3/run.log
-
-      - name: Run U3.1 trained-distribution Izh localization
-        run: |
-          mkdir -p unified_snn_transform/run/U31
-          python unified_snn_transform/run_u31_izh_localization.py \
-            --checkpoint unified_snn_transform/run/U3/U3_REFERENCE.pt \
-            --out unified_snn_transform/run/U31 \
-            --topn 6 --select-batches 3 --test-batches 8 --batch 64 \
-            --window-penalty 0.00001 --seed 17 --threads 4 \
-            | tee unified_snn_transform/run/U31/run.log
-
-      - name: Run U3B selective-state functional gate
-        run: |
-          mkdir -p unified_snn_transform/run/U3B
-          python unified_snn_transform/run_u3b_selective_state.py \
-            --out unified_snn_transform/run/U3B \
-            --tokens 16 --d 32 --heads 2 --features 32 --ff 64 \
-            --value-dim 8 --nkeys 4 --reset-amp 8 \
-            --train-steps 1200 --train-batch 128 --lr 0.002 --report-every 200 \
-            --eval-batches 8 --eval-batch 128 --seed 23 --threads 4 \
-            | tee unified_snn_transform/run/U3B/run.log
-
-      - name: Show summaries
+      - name: Show U3B-R summary
         if: always()
         run: |
           python - <<'PY'
           import json, os
-          files=[
-              ('U0_U1','unified_snn_transform/run/U0_U1/UNIFIED_RESULTS.json'),
-              ('U2','unified_snn_transform/run/U2/U2_RESULTS.json'),
-              ('U3','unified_snn_transform/run/U3/U3_RESULTS.json'),
-              ('U31','unified_snn_transform/run/U31/U31_RESULTS.json'),
-              ('U3B','unified_snn_transform/run/U3B/U3B_RESULTS.json')]
-          for name,path in files:
-              if not os.path.exists(path): continue
-              d=json.load(open(path));print('\n===',name,'===')
-              if name=='U3B':
-                  keep={'stage':d.get('stage'),'PASS':d.get('PASS'),'gates':d.get('gates'),
-                        'selective_eval':d.get('selective_eval'),'selective_identity_ablation':d.get('selective_identity_ablation'),
-                        'matched_fixed_eval':d.get('matched_fixed_eval'),'post_reset_selective_advantage':d.get('post_reset_selective_advantage'),
-                        'alpha_selectivity_gap':d.get('alpha_selectivity_gap'),'decision':d.get('decision')}
-              elif name=='U31':
-                  keep={'stage':d.get('stage'),'gates':d.get('gates'),'PASS':d.get('PASS'),
-                        'selected_Q':d.get('expanded_search',{}).get('selected_Q'),
-                        'selected_K':d.get('expanded_search',{}).get('selected_K'),
-                        'heldout_QK':d.get('heldout_QK'),'decision':d.get('decision')}
-              elif name=='U3':
-                  keep={'stage':d.get('stage'),'gates':d.get('gates'),'PASS':d.get('PASS'),
-                        'reference_task':d.get('reference_task'),'shuffled_binding_control':d.get('shuffled_binding_control'),
-                        'binding_sign_accuracy_drop':d.get('binding_sign_accuracy_drop'),
-                        'izh_parity':d.get('izh_parity'),'density_summary':d.get('trajectory_audit',{}).get('density_summary'),
-                        'decision':d.get('decision')}
-              elif name=='U2':
-                  keep={'stage':d.get('stage'),'gates':d.get('gates'),'PASS':d.get('PASS'),
-                        'q':d.get('q'),'k':d.get('k'),'v':d.get('v'),'decision':d.get('decision')}
-              else:
-                  keep={'stage':d.get('stage'),'gates':d.get('gates'),'PASS':d.get('PASS'),
-                        'summary':d.get('summary'),'compute':d.get('compute'),'calibration':d.get('calibration')}
-              print(json.dumps(keep,indent=2))
+          p='unified_snn_transform/run/U3BR/U3BR_RESULTS.json'
+          if os.path.exists(p):
+              d=json.load(open(p))
+              print(json.dumps({
+                  'stage':d.get('stage'),'PASS':d.get('PASS'),'gates':d.get('gates'),
+                  'base_identity_eval':d.get('base_identity_eval'),
+                  'oracle_reset_eval':d.get('oracle_reset_eval'),'identity_eval':d.get('identity_eval'),
+                  'selective_eval':d.get('selective_eval'),'fixed_eval':d.get('fixed_eval'),
+                  'selective_identity_ablation':d.get('selective_identity_ablation'),
+                  'alpha_selectivity_gap':d.get('alpha_selectivity_gap'),
+                  'post_reset_selective_advantage':d.get('post_reset_selective_advantage'),
+                  'decision':d.get('decision')}, indent=2))
           PY
 
-      - name: Upload results
+      - name: Upload current results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SNN_TRANSFORM_UNIFIED_U0_U3B
-          path: unified_snn_transform/run
+          name: SNN_TRANSFORM_UNIFIED_U3BR
+          path: unified_snn_transform/run/U3BR
           retention-days: 30
