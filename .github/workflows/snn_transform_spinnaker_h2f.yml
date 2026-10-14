@@ -44,6 +44,7 @@ jobs:
           python -m py_compile spinnaker_backend/h2f_aplx/h2f_contract.py
           python -m py_compile spinnaker_backend/h2f_aplx/prepare_h2f_board_package.py
           python -m py_compile spinnaker_backend/h2f_aplx/run_h2f_spalloc_board.py
+          python -m py_compile spinnaker_backend/h2f_aplx/run_h2f_spalloc_board_v2.py
 
       - name: Re-run H2D frozen-HIR host C parity
         run: |
@@ -109,5 +110,6 @@ jobs:
             spinnaker_backend/h2f_aplx/build/gnu/snn_transform_h2f.elf
             spinnaker_backend/h2f_aplx/build/gnu/snn_transform_h2f.txt
             spinnaker_backend/h2f_aplx/run_h2f_spalloc_board.py
+            spinnaker_backend/h2f_aplx/run_h2f_spalloc_board_v2.py
             spinnaker_backend/run/H2F/build/H2F_BOARD_PACKAGE.npz
           retention-days: 30
