@@ -31,7 +31,7 @@ jobs:
             --out unified_snn_transform/run/U4C \
             --tokens 16 --d 32 --heads 2 --features 32 --ff 64 --value-dim 8 \
             --train-steps 900 --train-batch 128 \
-            --eval-batches 8 --eval-batch 128 --topn 5 \
+            --eval-batches 8 --eval-batch 128 --topn 12 \
             --seed 71 --threads 4 | tee unified_snn_transform/run/U4C/run.log
       - name: Show result
         if: always()
