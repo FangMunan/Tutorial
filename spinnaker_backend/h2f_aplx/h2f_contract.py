@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 
@@ -43,15 +43,36 @@ F_MEM = 22
 F_DEC = 20
 
 
-def _as_le_bytes(a: np.ndarray) -> bytes:
+def _hardware_dtype(name: str) -> np.dtype:
+    # The H1/H2 NumPy exporters often keep arithmetic arrays as int64 even when
+    # the frozen contract requires signed int32 storage.  H2F therefore chooses
+    # the target storage type by operator role, not by incidental host dtype.
+    if name.endswith("_row_ptr"):
+        return np.dtype("<u4")
+    if name.endswith("_col_idx"):
+        return np.dtype("<u2")
+    return np.dtype("<i4")
+
+
+def _as_le_bytes(name: str, a: np.ndarray) -> bytes:
     a = np.ascontiguousarray(a)
-    if a.dtype.itemsize == 2:
-        dt = np.dtype("<u2") if a.dtype.kind == "u" else np.dtype("<i2")
-    elif a.dtype.itemsize == 4:
-        dt = np.dtype("<u4") if a.dtype.kind == "u" else np.dtype("<i4")
-    else:
-        raise ValueError(f"unsupported HIR dtype {a.dtype}")
-    return a.astype(dt, copy=False).tobytes(order="C")
+    dt = _hardware_dtype(name)
+    cast = a.astype(dt, copy=False)
+    # Prevent silent narrowing if an upstream change exceeds the frozen H2F
+    # storage range.
+    if dt.itemsize == 4 and dt.kind == "i":
+        back = cast.astype(np.int64)
+        if not np.array_equal(back, a.astype(np.int64)):
+            raise OverflowError(f"{name} does not fit signed int32")
+    elif dt.itemsize == 4 and dt.kind == "u":
+        back = cast.astype(np.uint64)
+        if np.any(a.astype(np.int64) < 0) or not np.array_equal(back, a.astype(np.uint64)):
+            raise OverflowError(f"{name} does not fit uint32")
+    elif dt.itemsize == 2 and dt.kind == "u":
+        back = cast.astype(np.uint64)
+        if np.any(a.astype(np.int64) < 0) or not np.array_equal(back, a.astype(np.uint64)):
+            raise OverflowError(f"{name} does not fit uint16")
+    return cast.tobytes(order="C")
 
 
 def build_hir_blob(arrays: Dict[str, np.ndarray]) -> Tuple[np.ndarray, Dict[str, Tuple[int, int]]]:
@@ -64,7 +85,7 @@ def build_hir_blob(arrays: Dict[str, np.ndarray]) -> Tuple[np.ndarray, Dict[str,
         while len(blob) & 3:
             blob.append(0)
         offset = len(blob)
-        raw = _as_le_bytes(np.asarray(arrays[name]))
+        raw = _as_le_bytes(name, np.asarray(arrays[name]))
         blob.extend(raw)
         desc[name] = (offset, len(raw))
     while len(blob) & 3:
