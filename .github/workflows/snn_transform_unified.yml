@@ -33,6 +33,7 @@ jobs:
           python -m py_compile unified_snn_transform/run_unified_gate.py
           python -m py_compile unified_snn_transform/run_u2_event_qkv.py
           python -m py_compile unified_snn_transform/run_u3_trained_retrieval.py
+          python -m py_compile unified_snn_transform/run_u3.py
 
       - name: Run U0-U1 unified lightweight gate
         run: |
@@ -55,7 +56,7 @@ jobs:
       - name: Run U3 trained associative-retrieval gate
         run: |
           mkdir -p unified_snn_transform/run/U3
-          python unified_snn_transform/run_u3_trained_retrieval.py \
+          python unified_snn_transform/run_u3.py \
             --out unified_snn_transform/run/U3 \
             --tokens 16 --d 32 --heads 2 --features 32 --ff 64 --value-dim 8 \
             --train-steps 800 --train-batch 128 --lr 0.002 --report-every 100 \
