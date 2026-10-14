@@ -21,10 +21,18 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Static-check board runners
+      - name: Install host regression dependency
+        run: python -m pip install numpy
+
+      - name: Static-check board runners and board contract
         run: |
           python -m py_compile spinnaker_backend/h2_aplx/run_h2e_spalloc_board_selftest.py
           python -m py_compile spinnaker_backend/h2_aplx/run_h2e_board_selftest.py
+          python -m py_compile spinnaker_backend/h2_aplx/test_h2e_board_contract.py
+
+      - name: Verify exact H2E board self-test vector on host C kernels
+        working-directory: spinnaker_backend/h2_aplx
+        run: python test_h2e_board_contract.py
 
       - name: Install GNU Arm embedded toolchain
         run: |
