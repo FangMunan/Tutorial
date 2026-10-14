@@ -32,6 +32,7 @@ jobs:
         run: |
           python -m py_compile unified_snn_transform/run_unified_gate.py
           python -m py_compile unified_snn_transform/run_u2_event_qkv.py
+          python -m py_compile unified_snn_transform/run_u3_trained_retrieval.py
 
       - name: Run U0-U1 unified lightweight gate
         run: |
@@ -51,6 +52,16 @@ jobs:
             --steps 6 --batch 4 --change-frac 0.25 --eps 1e-5 \
             --seed 7 --threads 4 | tee unified_snn_transform/run/U2/run.log
 
+      - name: Run U3 trained associative-retrieval gate
+        run: |
+          mkdir -p unified_snn_transform/run/U3
+          python unified_snn_transform/run_u3_trained_retrieval.py \
+            --out unified_snn_transform/run/U3 \
+            --tokens 16 --d 32 --heads 2 --features 32 --ff 64 --value-dim 8 \
+            --train-steps 800 --train-batch 128 --lr 0.002 --report-every 100 \
+            --eval-batches 8 --eval-batch 128 --trajectory-steps 6 --audit-batch 64 \
+            --task-gate 0.85 --seed 7 --threads 4 | tee unified_snn_transform/run/U3/run.log
+
       - name: Show summaries
         if: always()
         run: |
@@ -58,16 +69,24 @@ jobs:
           import json, os
           for name,path in [
               ('U0_U1','unified_snn_transform/run/U0_U1/UNIFIED_RESULTS.json'),
-              ('U2','unified_snn_transform/run/U2/U2_RESULTS.json')]:
+              ('U2','unified_snn_transform/run/U2/U2_RESULTS.json'),
+              ('U3','unified_snn_transform/run/U3/U3_RESULTS.json')]:
               if os.path.exists(path):
                   d=json.load(open(path))
                   print('\n===',name,'===')
                   keep={'stage':d.get('stage'),'gates':d.get('gates'),'PASS':d.get('PASS')}
                   if name=='U0_U1':
                       keep.update(summary=d.get('summary'),compute=d.get('compute'),calibration=d.get('calibration'))
-                  else:
+                  elif name=='U2':
                       keep.update(q=d.get('q'),k=d.get('k'),v=d.get('v'),
                                   downstream_delta_density=d.get('downstream_delta_density'),decision=d.get('decision'))
+                  else:
+                      keep.update(reference_task=d.get('reference_task'),
+                                  shuffled_binding_control=d.get('shuffled_binding_control'),
+                                  binding_sign_accuracy_drop=d.get('binding_sign_accuracy_drop'),
+                                  izh_parity=d.get('izh_parity'),
+                                  density_summary=d.get('trajectory_audit',{}).get('density_summary'),
+                                  decision=d.get('decision'))
                   print(json.dumps(keep,indent=2))
           PY
 
@@ -75,6 +94,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SNN_TRANSFORM_UNIFIED_U0_U2
+          name: SNN_TRANSFORM_UNIFIED_U0_U3
           path: unified_snn_transform/run
           retention-days: 30
