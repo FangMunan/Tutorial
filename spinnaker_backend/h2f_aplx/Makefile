@@ -14,4 +14,5 @@ include $(SPINN_INSTALL_DIR)/make/app.make
 endif
 
 $(BUILD_DIR)h2_kernels.o: ../h2_aplx/h2_kernels.c
+	mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $<
