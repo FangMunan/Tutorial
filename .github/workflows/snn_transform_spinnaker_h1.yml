@@ -1,0 +1,32 @@
+name: SNN Transform SpiNNaker H1 Fixed Point
+
+on:
+  push:
+    branches:
+      - snn-transform-spinnaker-h0-h1-20261014
+    paths:
+      - 'spinnaker_backend/**'
+      - '.github/workflows/snn_transform_spinnaker_h1.yml'
+  workflow_dispatch:
+
+jobs:
+  h1:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install NumPy
+        run: python -m pip install numpy
+      - name: Compile H1 code
+        run: |
+          python -m py_compile spinnaker_backend/h1_fixed_point_emulator.py
+          python -m py_compile spinnaker_backend/run_h1_gate.py
+      - name: Run H1 integer fixed-point gate
+        run: python -m spinnaker_backend.run_h1_gate
+      - name: Upload H1 result
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_SPINNAKER_H1
+          path: spinnaker_backend/run/H1/H1_RESULTS.json
