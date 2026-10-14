@@ -148,7 +148,7 @@ class ActualHIRRuntime:
         self.use_c = use_c
         self.d = int(meta["d"])
         self.heads = int(meta["heads"])
-        self.features = int(meta["features"])
+        self.n_features = int(meta["features"])
         self.ff = int(meta["ff"])
         self.dh = self.d // self.heads
         self.scale_q20 = int(round((self.dh ** -0.25) * (1 << F_ACT)))
@@ -200,8 +200,8 @@ class ActualHIRRuntime:
         omega = i32(self.A["omega"])
         if not self.use_c:
             return stable_a_ref(shaped, omega, self.scale_q20, query)
-        out = np.empty((shaped.shape[0], self.heads, self.features), dtype=np.int32)
-        self.lib.h2_stable_a_q20(ptr(shaped, ct.c_int32), shaped.shape[0], self.heads, self.dh, ptr(omega, ct.c_int32), self.features, self.scale_q20, int(query), ptr(out, ct.c_int32))
+        out = np.empty((shaped.shape[0], self.heads, self.n_features), dtype=np.int32)
+        self.lib.h2_stable_a_q20(ptr(shaped, ct.c_int32), shaped.shape[0], self.heads, self.dh, ptr(omega, ct.c_int32), self.n_features, self.scale_q20, int(query), ptr(out, ct.c_int32))
         return out
 
     def phi(self, a, query):
@@ -221,7 +221,7 @@ class ActualHIRRuntime:
                     int(round(bias * (1 << F_MEM))), int(round(gain * (1 << F_MEM))), T,
                     ptr(dec, ct.c_int32), out_frac, ptr(ph, ct.c_int32),
                 )
-            out[:, h, :] = ph.reshape(a.shape[0], self.features)
+            out[:, h, :] = ph.reshape(a.shape[0], self.n_features)
         return out
 
     def features(self, xq):
@@ -237,9 +237,9 @@ class ActualHIRRuntime:
         if not self.use_c:
             H, g = state_init_ref(pk, v)
         else:
-            H = np.empty((self.heads, self.features, self.dh), dtype=np.int32)
-            g = np.empty((self.heads, self.features), dtype=np.int32)
-            self.lib.h2_attention_state_init(ptr(i32(pk), ct.c_int32), ptr(i32(v), ct.c_int32), pk.shape[0], self.heads, self.features, self.dh, ptr(H, ct.c_int32), ptr(g, ct.c_int32))
+            H = np.empty((self.heads, self.n_features, self.dh), dtype=np.int32)
+            g = np.empty((self.heads, self.n_features), dtype=np.int32)
+            self.lib.h2_attention_state_init(ptr(i32(pk), ct.c_int32), ptr(i32(v), ct.c_int32), pk.shape[0], self.heads, self.n_features, self.dh, ptr(H, ct.c_int32), ptr(g, ct.c_int32))
         return State(H=H, g=g, pq=pq.copy(), pk=pk.copy(), v=v.copy())
 
     def update_token(self, st, idx, new_pq, new_pk, new_v):
@@ -247,7 +247,7 @@ class ActualHIRRuntime:
         if not self.use_c:
             token_delta_ref(st.H, st.g, old_pk, old_v, new_pk, new_v)
         else:
-            self.lib.h2_attention_token_delta(ptr(st.H, ct.c_int32), ptr(st.g, ct.c_int32), ptr(i32(old_pk), ct.c_int32), ptr(i32(old_v), ct.c_int32), ptr(i32(new_pk), ct.c_int32), ptr(i32(new_v), ct.c_int32), self.heads, self.features, self.dh)
+            self.lib.h2_attention_token_delta(ptr(st.H, ct.c_int32), ptr(st.g, ct.c_int32), ptr(i32(old_pk), ct.c_int32), ptr(i32(old_v), ct.c_int32), ptr(i32(new_pk), ct.c_int32), ptr(i32(new_v), ct.c_int32), self.heads, self.n_features, self.dh)
         st.pq[idx] = new_pq
         st.pk[idx] = new_pk
         st.v[idx] = new_v
@@ -256,7 +256,7 @@ class ActualHIRRuntime:
         if not self.use_c:
             return read_ref(st.pq, st.H, st.g)
         out = np.empty((st.pq.shape[0], self.heads, self.dh), dtype=np.int32)
-        self.lib.h2_attention_read(ptr(i32(st.pq), ct.c_int32), ptr(st.H, ct.c_int32), ptr(st.g, ct.c_int32), st.pq.shape[0], self.heads, self.features, self.dh, ptr(out, ct.c_int32))
+        self.lib.h2_attention_read(ptr(i32(st.pq), ct.c_int32), ptr(st.H, ct.c_int32), ptr(st.g, ct.c_int32), st.pq.shape[0], self.heads, self.n_features, self.dh, ptr(out, ct.c_int32))
         return out
 
     def step(self, xq, state, changed):
