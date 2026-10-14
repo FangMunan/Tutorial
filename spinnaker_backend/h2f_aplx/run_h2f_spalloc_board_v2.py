@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """H2F physical-board runner v2.
 
-The target now deliberately preserves VCPU user0 as the executed data-spec
-region-table pointer.  SpiNNMan needs that pointer after FINISHED to locate the
-output SDRAM region.  This wrapper reuses the tested v1 runner implementation,
+The target deliberately preserves VCPU user0 as the executed data-spec
+region-table pointer. SpiNNMan needs that pointer after FINISHED to locate the
+output SDRAM region. This wrapper reuses the tested v1 runner implementation,
 replaces only the obsolete ``user0_magic`` acceptance check with a non-zero
 region-table-pointer check, and leaves all scientific gates unchanged.
+
+The import fallback allows the two runner files to be placed side-by-side in a
+flat JupyterLab upload directory as well as inside the repository package.
 """
 from __future__ import annotations
 
@@ -17,7 +20,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from spinnaker_backend.h2f_aplx import run_h2f_spalloc_board as base
+try:
+    from spinnaker_backend.h2f_aplx import run_h2f_spalloc_board as base
+except ImportError:
+    import run_h2f_spalloc_board as base
 
 
 def main() -> None:
@@ -83,7 +89,7 @@ def main() -> None:
         runtime = base._run_frontend(
             run_dir, cfg_home, staged_aplx.name, package, args.n_boards)
 
-        # v1 expected user0 to be an application magic.  H2F target v2 keeps
+        # v1 expected user0 to be an application magic. H2F target v2 keeps
         # user0 as the data-spec pointer so the host can locate output region 3.
         checks = runtime["checks"]
         checks.pop("user0_magic", None)
