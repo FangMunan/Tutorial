@@ -67,61 +67,56 @@ final resident state: bit-exact
 
 ## H2E actual SpiNNaker APLX cross-compilation — PASS
 
-The board-test version now uses the standard `SYNC_WAIT` start barrier. This is
-important because the arithmetic test is short enough that an unsynchronised
-application could finish before the host front-end reliably observes the run.
-The callback is queued before `spin1_start(SYNC_WAIT)`; after SYNC0 it executes
-the arithmetic checks, writes IOBUF + VCPU signatures, and calls `spin1_exit`.
+The board-test application uses the standard `SYNC_WAIT` start barrier. The
+callback is queued before `spin1_start(SYNC_WAIT)`; after SYNC0 it executes the
+arithmetic checks, writes IOBUF + VCPU signatures, and calls `spin1_exit`.
 
-Latest post-SYNC compile:
+## H2E-board first physical execution — EXECUTED, self-test vector bug exposed
 
-- commit: `1c543cce2bbbc4236eb2f9ceaa6079aa19c171d1`;
-- H2 host-kernel workflow run: `38621223349` — PASS;
-- H2E APLX workflow run: `38621223025` — PASS;
-- artifact: `SNN_TRANSFORM_H2E_APLX`;
-- artifact ID: `11921198226`;
-- artifact ZIP SHA256:
-  `2b3f746fa5eeca9f76c9a89a5914a691e0b0ff764871ca798e6fd6cde847674a`;
-- current APLX size: `19532` bytes.
-
-The bundle contains:
+The first physical Manchester/spalloc run reached a real SpiNNaker core:
 
 ```text
-snn_transform_h2.aplx
-build/gnu/snn_transform_h2.elf
-build/gnu/snn_transform_h2.txt
-run_h2e_spalloc_board_selftest.py
-run_h2e_board_selftest.py
-H2E_BOARD_TEST.md
+placement: x=0, y=0, p=3
+app_id:    17
+user0:     0x48324531  (H2E magic)      PASS
+user2:     0           (chip id)        PASS
+user3:     196625      (core/app id)    PASS
+user1:     5           (self-test rc)   FAIL at check 5
 ```
 
-## H2E-board physical test — READY, NOT YET EXECUTED
+This proves that allocation, placement, APLX loading, SYNC0 start, ARM execution,
+VCPU-register writeback and host readback all occurred on physical hardware.
+The scientific H2E-board acceptance gate remains FAIL because the arithmetic
+self-test itself returned rc=5.
 
-The primary runner for the Manchester environment is:
+### rc=5 diagnosis
+
+The failure was in the **self-test expected value**, not in the H/g kernel.
+The test used:
 
 ```text
-spinnaker_backend/h2_aplx/run_h2e_spalloc_board_selftest.py
+H0      = 1000          Q20 code
+old_pk  = 100           Q16 code
+new_pk  = 120           Q16 code
+old_v   = new_v = 1<<20 Q20 code (=1.0)
 ```
 
-It reuses the working `[Machine]` settings from `~/.spynnaker.cfg`, requests one
-physical board through spalloc, places one custom machine vertex, loads the
-current APLX, starts it through the SYNC0 barrier, waits for FINISHED, reads the
-core's IOBUF, verifies VCPU user registers, and releases the allocation in a
-`finally` block.
-
-A PASS requires all of:
+The resident H update converts `pk(Q16) * v(Q20)` to H(Q20), therefore shifts by
+16 bits.  With v=1.0:
 
 ```text
-iobuf_pass_token       = true
-iobuf_no_fail_token    = true
-user0_magic             = true   # 0x48324531 / H2E1
-user1_rc_zero           = true
-user2_chip_match        = true
-user3_core_app_match    = true
+old outer code = 100 * 2^(20-16) = 1600
+new outer code = 120 * 2^(20-16) = 1920
+H_new = 1000 - 1600 + 1920 = 1320
 ```
 
-The direct `ybug` runner is retained only as a fallback for directly reachable
-Ethernet boards.
+The original APLX incorrectly expected `1020`, producing rc=5 even though the
+kernel computed the correct Q-format result.
+
+The APLX source is corrected to require `H[0] == 1320`.  A new host regression
+`test_h2e_board_contract.py` now executes this exact board vector through the C
+kernels before every APLX build so this particular contract mismatch cannot
+recur silently.
 
 ## H2 stages
 
@@ -130,19 +125,25 @@ Ethernet boards.
 - **H2C — PASS:** fixed-point Izh RS + online trajectory decoder.
 - **H2D — PASS:** complete host-C resident block on actual frozen H1.1 HIR,
   including persistent changed-token execution.
-- **H2E — PASS:** latest synchronized custom application cross-compiles into a
-  genuine ARM968/SpiNNaker APLX image.
-- **H2E-board — READY / PENDING EXECUTION:** physical one-core arithmetic test.
-- **H2F — after H2E-board:** SDRAM frozen-HIR loader, changed-token ingress,
-  complete resident board execution, and output/state readback versus H2D.
+- **H2E — PASS:** synchronized custom application cross-compiles into a genuine
+  ARM968/SpiNNaker APLX image.
+- **H2E-board transport/execution path — VERIFIED:** physical APLX execution and
+  result readback are established by the first run.
+- **H2E-board arithmetic acceptance — PENDING corrected APLX rerun:** first run
+  stopped at rc=5 because of the incorrect self-test constant above.
+- **H2F — after corrected H2E-board PASS:** SDRAM frozen-HIR loader,
+  changed-token ingress, complete resident board execution, and output/state
+  readback versus H2D.
 
 ## Claim boundary
 
 Current strongest valid statement:
 
-> The latest synchronized H2 board-test application cross-compiles successfully
-> into a genuine SpiNNaker APLX image, and the complete fixed-point C path is
-> bit-exact to the frozen H1.1 integer contract on the tested host trajectory.
+> The H2 APLX has executed on a physical SpiNNaker core and the board/host
+> transport path is verified.  The first arithmetic acceptance run failed at
+> self-test check 5 because the test vector encoded the wrong Q-format expected
+> H value; the kernel itself matched the frozen contract and the expected value
+> has been corrected from 1020 to 1320.
 
-Do not yet state that the APLX has executed on a physical board. H2E-board is the
-next experimental gate.
+Do not yet mark H2E-board arithmetic acceptance as PASS until the corrected APLX
+returns rc=0 and the six host-side PASS checks are all true.
