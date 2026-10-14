@@ -7,6 +7,7 @@ on:
       - snn-transform-u4-sparse-tail-20261014
     paths:
       - 'unified_snn_transform/run_u4_sparse_tail.py'
+      - 'unified_snn_transform/run_u4b_task_sparse_block.py'
       - '.github/workflows/u4_sparse_tail.yml'
 
 jobs:
@@ -23,8 +24,10 @@ jobs:
           python -m pip install numpy
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Compile
-        run: python -m py_compile unified_snn_transform/run_u4_sparse_tail.py
-      - name: Run U4 sparse tail gate
+        run: |
+          python -m py_compile unified_snn_transform/run_u4_sparse_tail.py
+          python -m py_compile unified_snn_transform/run_u4b_task_sparse_block.py
+      - name: Run U4A frozen-dense teacher screen
         run: |
           mkdir -p unified_snn_transform/run/U4
           python unified_snn_transform/run_u4_sparse_tail.py \
@@ -35,16 +38,31 @@ jobs:
             --target-activity 0.25 --activity-lambda 0.05 \
             --rel-gate 0.08 --cos-gate 0.995 --eff-gate 0.45 \
             --seed 41 --threads 4 | tee unified_snn_transform/run/U4/run.log
+      - name: Run U4B task-trained sparse block gate
+        run: |
+          mkdir -p unified_snn_transform/run/U4B
+          python unified_snn_transform/run_u4b_task_sparse_block.py \
+            --out unified_snn_transform/run/U4B \
+            --tokens 16 --d 32 --heads 2 --features 32 --ff 64 --value-dim 8 \
+            --train-steps 900 --train-batch 128 \
+            --eval-batches 8 --eval-batch 128 \
+            --task-gate 0.95 --binding-drop-gate 0.20 --effective-fraction-gate 0.55 \
+            --seed 53 --threads 4 | tee unified_snn_transform/run/U4B/run.log
       - name: Show result summary
+        if: always()
         run: |
           python - <<'PY'
-          import json
-          p='unified_snn_transform/run/U4/U4_RESULTS.json'
-          d=json.load(open(p))
-          print(json.dumps({'stage':d['stage'],'PASS':d['PASS'],'best_passing':d['best_passing'],'decision':d['decision']},indent=2))
+          import json,os
+          for name,p in [('U4A','unified_snn_transform/run/U4/U4_RESULTS.json'),('U4B','unified_snn_transform/run/U4B/U4B_RESULTS.json')]:
+              if os.path.exists(p):
+                  d=json.load(open(p)); print('\n===',name,'===');
+                  print(json.dumps({'stage':d['stage'],'PASS':d['PASS'],'best_passing':d.get('best_passing'),'decision':d['decision']},indent=2))
           PY
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: SNN_TRANSFORM_U4_SPARSE_TAIL
-          path: unified_snn_transform/run/U4
+          path: |
+            unified_snn_transform/run/U4
+            unified_snn_transform/run/U4B
           retention-days: 30
