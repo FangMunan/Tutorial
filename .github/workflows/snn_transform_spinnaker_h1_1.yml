@@ -1,4 +1,4 @@
-name: SNN Transform SpiNNaker H1.1 Frozen Checkpoint
+name: SNN Transform SpiNNaker H1.1 Functional Contract
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
       - snn-transform-spinnaker-h0-h1-20261014
     paths:
       - 'spinnaker_backend/run_h1_1_frozen_checkpoint*.py'
+      - 'spinnaker_backend/run_h1_1_functional_contract.py'
       - 'spinnaker_backend/h1_fixed_point_emulator.py'
       - 'SNNTransformBlock_v1_1/**'
       - '.github/workflows/snn_transform_spinnaker_h1_1.yml'
@@ -16,7 +17,7 @@ permissions:
   actions: read
 
 jobs:
-  h1_1:
+  h1_1_functional:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -36,8 +37,10 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
           run-id: 38538624735
-      - name: Compile H1.1 v11
+      - name: Compile H1.1 functional contract
         run: |
+          python -m py_compile SNNTransformBlock_v1_1/SNNTransformBlock_v1_1.py
+          python -m py_compile SNNTransformBlock_v1_1/test_batch_isolation.py
           python -m py_compile spinnaker_backend/h1_fixed_point_emulator.py
           python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint.py
           python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint_v2.py
@@ -45,20 +48,23 @@ jobs:
           python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint_v6.py
           python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint_v7.py
           python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint_v9.py
-          python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint_v11.py
-      - name: Run H1.1 v11 actual-checkpoint gate
+          python -m py_compile spinnaker_backend/run_h1_1_functional_contract.py
+      - name: Verify batch isolation invariant
+        run: python -m SNNTransformBlock_v1_1.test_batch_isolation
+      - name: Freeze H1.1 v9 functional backend contract
         run: |
-          python -m spinnaker_backend.run_h1_1_frozen_checkpoint_v11 \
+          python -m spinnaker_backend.run_h1_1_functional_contract \
             --checkpoint spinnaker_backend/run/H1_1/source/SNNTransformBlock_v1.pt \
-            --out spinnaker_backend/run/H1_1/result_v11 \
+            --out spinnaker_backend/run/H1_1/functional_v9 \
             --batch 8 --steps 6 --change-frac 0.25 --seed 17171
-      - name: Upload H1.1 v11 result and HIR
+      - name: Upload frozen H1.1 functional contract
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: SNN_TRANSFORM_SPINNAKER_H1_1_V11
+          name: SNN_TRANSFORM_SPINNAKER_H1_1_FUNCTIONAL_V9
           path: |
-            spinnaker_backend/run/H1_1/result_v11/H1_1_V2_RESULTS.json
-            spinnaker_backend/run/H1_1/result_v11/SNNTransformBlock_v1_1_HIR_H1_1_v2.npz
-            spinnaker_backend/run/H1_1/H1_1_V11_DIRECT_ATTENTION_DECODER.json
+            spinnaker_backend/run/H1_1/functional_v9/H1_1_FUNCTIONAL_CONTRACT.json
+            spinnaker_backend/run/H1_1/functional_v9/SNNTransformBlock_v1_1_HIR_H1_1_FUNCTIONAL_V9.npz
+            spinnaker_backend/run/H1_1/functional_v9/v9/H1_1_V2_RESULTS.json
+            spinnaker_backend/run/H1_1/H1_1_V9_ATTENTION_AWARE_Q_SEARCH.json
           retention-days: 30
