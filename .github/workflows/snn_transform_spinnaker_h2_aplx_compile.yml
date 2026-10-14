@@ -39,8 +39,9 @@ jobs:
           SPINN_DIRS: /tmp/spinnaker_tools
           SPINN_INSTALL_DIR: /tmp/spinnaker_tools
         run: |
-          make -C spinnaker_backend/h2_aplx GNU=1 DEBUG=0
+          make -C spinnaker_backend/h2_aplx GNU=1 DEBUG=1
           test -s spinnaker_backend/h2_aplx/snn_transform_h2.aplx
+          test -s spinnaker_backend/h2_aplx/build/gnu/snn_transform_h2.elf
           ls -lh spinnaker_backend/h2_aplx/snn_transform_h2.aplx
           arm-none-eabi-nm spinnaker_backend/h2_aplx/build/gnu/snn_transform_h2.elf | grep ' c_main$'
 
