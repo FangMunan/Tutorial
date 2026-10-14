@@ -34,10 +34,19 @@ static int self_test(void) {
     const int32_t new_v[1] = {1 << H2_F_ACT};
     h2_attention_token_delta(H, g, old_pk, old_v, new_pk, new_v, 1, 1, 1);
     if (g[0] != 520) return 4;
-    /* outer shift is 16, so a Q16 pk times Q20 v contributes pk in Q20. */
-    if (H[0] != 1020) return 5;
 
-    /* Normalized read: pq*H/(pq*g) = H/g, then converted to Q20. */
+    /*
+     * pk is Q16, v is Q20 and H is Q20.  Therefore the outer-product
+     * conversion shifts by 16 bits.  With v=1.0, an integer pk code of 100
+     * contributes 100 * 2^(20-16) = 1600 H-code units; 120 contributes 1920.
+     * Hence H_new = 1000 - 1600 + 1920 = 1320.
+     *
+     * The previous self-test incorrectly expected 1020.  The kernel itself was
+     * correct; the physical-board rc=5 result exposed this test-vector mistake.
+     */
+    if (H[0] != 1320) return 5;
+
+    /* Normalized read: pq*H/(pq*g), converted to Q20 by the frozen contract. */
     const int32_t pq[1] = {1 << H2_F_PQ};
     int32_t attended[1] = {0};
     h2_attention_read(pq, H, g, 1, 1, 1, 1, attended);
