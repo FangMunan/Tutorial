@@ -71,52 +71,51 @@ The board-test application uses the standard `SYNC_WAIT` start barrier. The
 callback is queued before `spin1_start(SYNC_WAIT)`; after SYNC0 it executes the
 arithmetic checks, writes IOBUF + VCPU signatures, and calls `spin1_exit`.
 
-## H2E-board first physical execution — EXECUTED, self-test vector bug exposed
+The first physical run established allocation/placement/load/start/readback but
+returned rc=5 because the self-test expected H=1020 instead of the correct Q20
+value H=1320.  The expected value was fixed and a host regression gate was added
+for the exact board-test vector before cross-compilation.
 
-The first physical Manchester/spalloc run reached a real SpiNNaker core:
+## H2E-board physical arithmetic acceptance — PASS
+
+Corrected physical Manchester/spalloc run supplied by the user:
 
 ```text
+stage:     H2E_SPALLOC_BOARD_APLX_SELFTEST
+PASS:      true
+APLX size: 19540 bytes
 placement: x=0, y=0, p=3
 app_id:    17
-user0:     0x48324531  (H2E magic)      PASS
-user2:     0           (chip id)        PASS
-user3:     196625      (core/app id)    PASS
-user1:     5           (self-test rc)   FAIL at check 5
 ```
 
-This proves that allocation, placement, APLX loading, SYNC0 start, ARM execution,
-VCPU-register writeback and host readback all occurred on physical hardware.
-The scientific H2E-board acceptance gate remains FAIL because the arithmetic
-self-test itself returned rc=5.
-
-### rc=5 diagnosis
-
-The failure was in the **self-test expected value**, not in the H/g kernel.
-The test used:
+All six acceptance checks passed:
 
 ```text
-H0      = 1000          Q20 code
-old_pk  = 100           Q16 code
-new_pk  = 120           Q16 code
-old_v   = new_v = 1<<20 Q20 code (=1.0)
+iobuf_pass_token       = true
+iobuf_no_fail_token    = true
+user0_magic             = true
+user1_rc_zero           = true
+user2_chip_match        = true
+user3_core_app_match    = true
 ```
 
-The resident H update converts `pk(Q16) * v(Q20)` to H(Q20), therefore shifts by
-16 bits.  With v=1.0:
+VCPU signatures:
 
 ```text
-old outer code = 100 * 2^(20-16) = 1600
-new outer code = 120 * 2^(20-16) = 1920
-H_new = 1000 - 1600 + 1920 = 1320
+user0 = 1211254065 = 0x48324531  (H2E magic)
+user1 = 0                         (self-test rc)
+user2 = 0                         (chip id, matches x=0,y=0)
+user3 = 196625                    (core/app signature, matches p=3/app=17)
 ```
 
-The original APLX incorrectly expected `1020`, producing rc=5 even though the
-kernel computed the correct Q-format result.
+Therefore **H2E-board PASS is frozen**.  This establishes physical execution of
+the H2 fixed-point arithmetic self-test on a real SpiNNaker ARM968 core,
+including spalloc allocation, placement, APLX loading, SYNC0 start, arithmetic
+execution, IOBUF generation, VCPU signature writeback, host readback and clean
+completion.
 
-The APLX source is corrected to require `H[0] == 1320`.  A new host regression
-`test_h2e_board_contract.py` now executes this exact board vector through the C
-kernels before every APLX build so this particular contract mismatch cannot
-recur silently.
+This result does not yet prove that the complete frozen H1.1 HIR has executed on
+the board.
 
 ## H2 stages
 
@@ -127,23 +126,52 @@ recur silently.
   including persistent changed-token execution.
 - **H2E — PASS:** synchronized custom application cross-compiles into a genuine
   ARM968/SpiNNaker APLX image.
-- **H2E-board transport/execution path — VERIFIED:** physical APLX execution and
-  result readback are established by the first run.
-- **H2E-board arithmetic acceptance — PENDING corrected APLX rerun:** first run
-  stopped at rc=5 because of the incorrect self-test constant above.
-- **H2F — after corrected H2E-board PASS:** SDRAM frozen-HIR loader,
-  changed-token ingress, complete resident board execution, and output/state
-  readback versus H2D.
+- **H2E-board — PASS:** corrected arithmetic self-test executed on physical
+  SpiNNaker hardware and all six independent host/board checks passed.
+- **H2F — NEXT:** SDRAM frozen-HIR loader, persistent resident state,
+  six-step changed-token execution, and output/state readback versus H2D.
+
+## H2F acceptance target
+
+The first H2F gate should keep the experiment deliberately narrow:
+
+```text
+frozen H1.1 functional-v9 HIR
+        -> host packs deterministic board image
+        -> SDRAM upload once
+        -> one resident APLX run
+        -> step 0: 16 token initialization
+        -> steps 1..5: 4 changed tokens per step
+        -> no hidden host compute/writeback loop
+        -> board stores H,g,pq,pk,v persistently
+        -> board writes final y,H,g,pq,pk,v result region
+        -> host reads result once after completion
+        -> compare against the H2D integer oracle
+```
+
+Primary scientific H2F gate:
+
+```text
+final y              bit-exact to H2D
+final H              bit-exact to H2D
+final g              bit-exact to H2D
+final pq             bit-exact to H2D
+final pk             bit-exact to H2D
+final v              bit-exact to H2D
+changed-token counts = 16,4,4,4,4,4
+host mid-run compute/writeback calls = 0
+```
+
+If strict bit-exact parity is broken only by a documented board-specific
+arithmetic/compiler difference, the discrepancy must be localized before any
+tolerance-based functional gate is considered.  Do not weaken H2F to a task-only
+gate pre-emptively.
 
 ## Claim boundary
 
 Current strongest valid statement:
 
-> The H2 APLX has executed on a physical SpiNNaker core and the board/host
-> transport path is verified.  The first arithmetic acceptance run failed at
-> self-test check 5 because the test vector encoded the wrong Q-format expected
-> H value; the kernel itself matched the frozen contract and the expected value
-> has been corrected from 1020 to 1320.
-
-Do not yet mark H2E-board arithmetic acceptance as PASS until the corrected APLX
-returns rc=0 and the six host-side PASS checks are all true.
+> The H2 fixed-point arithmetic implementation has now executed successfully on
+> a physical SpiNNaker core and passed all board-side arithmetic and host-side
+> signature checks.  The complete frozen H1.1 block has not yet been demonstrated
+> as a resident board computation; that is the H2F gate.
