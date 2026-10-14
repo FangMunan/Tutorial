@@ -37,6 +37,7 @@ jobs:
       - name: Cross-compile H2 APLX
         env:
           SPINN_DIRS: /tmp/spinnaker_tools
+          SPINN_INSTALL_DIR: /tmp/spinnaker_tools
         run: |
           make -C spinnaker_backend/h2_aplx GNU=1 DEBUG=0
           test -s spinnaker_backend/h2_aplx/snn_transform_h2.aplx
