@@ -106,7 +106,46 @@ Therefore:
 bit-exact to the independent integer reference for the tested persistent/event
 trajectory.**
 
-## Remaining H2 stages
+## H2E actual SpiNNaker APLX cross-compilation — PASS
+
+GitHub Actions run: `38579860932`.
+
+Toolchain:
+
+- GNU Arm Embedded `arm-none-eabi-gcc 13.2.1`;
+- official `SpiNNakerManchester/spinnaker_tools` pinned at
+  `619bd2b0726e970a8500079b5542e745200e62be`;
+- SARK and `spin1_api` built from that pinned source;
+- target flags include `-march=armv5te` and `-mthumb-interwork`;
+- official `sark.lnk`, `mkbuild`, `mkbin`, and `mkaplx` are used by the build.
+
+Cross-compilation produced:
+
+```text
+spinnaker_backend/h2_aplx/snn_transform_h2.aplx
+```
+
+The APLX image is approximately 15 KB.  The retained ELF exposes the expected
+application entry point:
+
+```text
+00000480 T c_main
+```
+
+H2E artifact:
+
+- name: `SNN_TRANSFORM_H2E_APLX`
+- artifact ID: `11902925638`
+- ZIP SHA256:
+  `556919aea2e6e59fe23b1f02d8df5dba39ba7d11dbb15b3aa263ed6a0108e8df`
+
+The artifact contains the APLX image, retained ELF, and disassembly text.
+
+This establishes **actual SpiNNaker APLX cross-compilation** of the current H2
+arithmetic self-test application.  It does not establish execution on a
+SpiNNaker board.
+
+## H2 stages
 
 - **H2A — PASS:** H/g token delta, normalized read, sparse linear primitives,
   overflow-safe fixed-point division.
@@ -114,8 +153,10 @@ trajectory.**
 - **H2C — PASS:** fixed-point Izh RS substeps + online trajectory decoder.
 - **H2D — PASS:** complete host C resident block on the actual frozen H1.1 HIR,
   including persistent changed-token execution.
-- **H2E — next:** cross-compile `snn_transform_h2.aplx` with the actual
-  SpiNNaker toolchain and execute the arithmetic self-test on a board.
+- **H2E — PASS (cross-compile):** actual ARM968/SpiNNaker-targeted APLX image
+  produced with the official low-level toolchain.
+- **H2E-board — next:** load the arithmetic self-test APLX on an actual board
+  and verify `SNN_TRANSFORM_H2_APLX_SELFTEST PASS` from the core.
 - **H2F:** SDRAM HIR loader + changed-token event ingress + full resident board
   execution and end-of-run output/state readback.
 
@@ -123,9 +164,10 @@ trajectory.**
 
 Current strongest valid statement:
 
-> H2 has a complete APLX-oriented fixed-point C arithmetic path whose composed
-> execution is bit-exact to the frozen H1.1 integer contract on the tested host
-> trajectory. A SARK/APLX application source and Makefile are prepared.
+> H2 has a complete fixed-point C path that is bit-exact to the frozen H1.1
+> integer contract on the tested host trajectory, and the current H2 SARK
+> application has been successfully cross-compiled into a genuine SpiNNaker
+> APLX image with the official low-level toolchain.
 
-This is not yet an APLX cross-compilation result and not a SpiNNaker board
-execution result. Those claims require H2E/H2F.
+Do not yet state that the arithmetic self-test or the full block has executed on
+a SpiNNaker board.  Board execution remains the next gate.
