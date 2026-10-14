@@ -8,11 +8,9 @@
  *   - only final y,H,g,pq,pk,v are written to the output SDRAM region;
  *   - host compares those final integer arrays bit-for-bit with the H2D oracle.
  *
- * The executed data-spec layout is intentionally decoded locally instead of
- * linking SpiNNFrontEndCommon on target.  The host still uses the official
- * GraphFrontEnd data-spec generator; this loader merely reads the documented
- * metadata pointer placed in VCPU user0.  This keeps H2F dependent only on the
- * same low-level SARK/spin1 toolchain already verified by H2E-board.
+ * The executed data-spec layout is decoded locally instead of linking
+ * SpiNNFrontEndCommon on target.  VCPU user0 is deliberately preserved for the
+ * full run because SpiNNMan uses it after FINISHED to locate SDRAM regions.
  */
 
 #include <sark.h>
@@ -22,7 +20,6 @@
 #include "../h2_aplx/h2_kernels.h"
 #include "h2f_contract.h"
 
-#define H2F_BOARD_MAGIC 0x48324642u  /* "H2FB" */
 #define DSE_MAGIC 0xAD130AD6u
 #define DSE_VERSION 0x00010000u
 #define H2F_EXPECTED_TRAJECTORY_WORDS 3168u
@@ -49,7 +46,6 @@ static uint32_t tokens, d_model, heads, features, ff_dim, steps, head_dim;
 static uint32_t scale_q20;
 static uint32_t q_evals, k_evals, v_evals;
 
-/* Resident state + work arena. */
 static int32_t *H_state;
 static int32_t *g_state;
 static int32_t *pq_state;
@@ -111,7 +107,8 @@ static void write_final_output(uint32_t rc, uint32_t completed_steps) {
 
 static void finish(uint32_t rc, uint32_t completed_steps) {
     write_final_output(rc, completed_steps);
-    sark.vcpu->user0 = H2F_BOARD_MAGIC;
+    /* user0 remains the data-spec metadata pointer so the host can locate
+     * region 3 after FINISHED. */
     sark.vcpu->user1 = rc;
     sark.vcpu->user2 = completed_steps;
     sark.vcpu->user3 = (sark_core_id() << 16) | (sark_app_id() & 0xffffu);
@@ -155,11 +152,8 @@ static int allocate_arena(void) {
     const uint32_t feature_words = heads * features;
     const uint32_t arena_words =
         H_words + g_words + pq_words + pk_words + v_words +
-        tokens * d_model +  /* ln_buf */
-        tokens * d_model +  /* attended */
-        tokens * d_model +  /* z_buf */
-        tokens * ff_dim +   /* hidden */
-        tokens * d_model +  /* y_buf */
+        tokens * d_model + tokens * d_model + tokens * d_model +
+        tokens * ff_dim + tokens * d_model +
         token_words + feature_words + feature_words + feature_words + token_words;
 
     int32_t *arena = (int32_t *) spin1_malloc(arena_words * sizeof(int32_t));
@@ -205,7 +199,6 @@ static void decode_phi(const int32_t *a, int is_query, int32_t *dest) {
 static void project_token_features(const int32_t *xn, int32_t *pq_out,
                                    int32_t *pk_out, int32_t *v_out) {
     const int32_t *omega = hir_i32(H2F_OMEGA);
-
     h2_dense_linear_q20(xn, 1, d_model,
         hir_i32(H2F_WQ), hir_i32(H2F_BQ), d_model, proj);
     h2_stable_a_q20(proj, 1, heads, head_dim, omega, features,
@@ -242,7 +235,6 @@ static int execute_step(uint32_t step) {
     const uint32_t *masks = trajectory + x_words_total;
     const uint32_t *mask = masks + step * tokens;
 
-    /* H2D computes LN1 for the full snapshot, then event-selects Q/K/V. */
     h2_layernorm_q20(
         x, tokens, d_model, hir_i32(H2F_LN1_G), hir_i32(H2F_LN1_B), ln_buf);
 
@@ -259,8 +251,7 @@ static int execute_step(uint32_t step) {
     } else {
         for (uint32_t n = 0; n < tokens; ++n) {
             if (mask[n] == 0) continue;
-            project_token_features(
-                ln_buf + n * d_model, new_pq, new_pk, new_v);
+            project_token_features(ln_buf + n * d_model, new_pq, new_pk, new_v);
             int32_t *pq_t = pq_state + n * heads * features;
             int32_t *pk_t = pk_state + n * heads * features;
             int32_t *v_t = v_state + n * d_model;
@@ -282,7 +273,6 @@ static int execute_step(uint32_t step) {
         z_buf[i] = (int32_t) ((int64_t) z_buf[i] + x[i]);
     }
 
-    /* Reuse ln_buf as LN2 output. */
     h2_layernorm_q20(
         z_buf, tokens, d_model, hir_i32(H2F_LN2_G), hir_i32(H2F_LN2_B), ln_buf);
     sparse_layer(ln_buf, tokens, d_model,
@@ -315,8 +305,6 @@ static void run_full_block(uint unused0, uint unused1) {
 }
 
 static int initialise(void) {
-    /* GraphFrontEnd's data-spec executor places this metadata pointer in VCPU
-     * user0 before starting the application.  Read and validate it locally. */
     h2f_dse_metadata_t *data = (h2f_dse_metadata_t *) (uintptr_t) sark.vcpu->user0;
     if (data == NULL || data->magic_number != DSE_MAGIC || data->version != DSE_VERSION) {
         return 30;
@@ -340,8 +328,10 @@ static int initialise(void) {
 void c_main(void) {
     int rc = initialise();
     if (rc != 0) {
-        sark.vcpu->user0 = H2F_BOARD_MAGIC;
+        /* Preserve user0 even on init failure for host-side diagnostics. */
         sark.vcpu->user1 = (uint32_t) rc;
+        sark.vcpu->user2 = 0;
+        sark.vcpu->user3 = (sark_core_id() << 16) | (sark_app_id() & 0xffffu);
         io_printf(IO_BUF, "SNN_TRANSFORM_H2F_FULL_BLOCK FAIL init_rc=%d\n", rc);
         return;
     }
