@@ -44,7 +44,7 @@ jobs:
         run: python spinnaker_backend/h2_aplx/test_h2_kernels.py
       - name: Run H2D actual frozen-HIR full-step parity gate
         run: |
-          python spinnaker_backend/h2_aplx/test_h2_actual_hir.py \
+          PYTHONPATH=. python spinnaker_backend/h2_aplx/test_h2_actual_hir.py \
             --hir spinnaker_backend/run/H2/source/functional_v9/SNNTransformBlock_v1_1_HIR_H1_1_FUNCTIONAL_V9.npz
       - name: Record H2 scope
         run: |
