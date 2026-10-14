@@ -1,0 +1,27 @@
+name: SNN Transform Block v1 Standalone Smoke
+
+on:
+  push:
+    branches:
+      - snn-transform-block-v1-20261014
+    paths:
+      - 'SNNTransformBlock_v1/**'
+      - '.github/workflows/standalone_block_v1_smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install PyTorch CPU
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Compile
+        run: python -m py_compile SNNTransformBlock_v1/SNNTransformBlock_v1.py
+      - name: Run standalone smoke test
+        run: python SNNTransformBlock_v1/SNNTransformBlock_v1.py
