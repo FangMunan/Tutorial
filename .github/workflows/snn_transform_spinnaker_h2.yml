@@ -1,0 +1,37 @@
+name: SNN Transform SpiNNaker H2 APLX Kernels
+
+on:
+  push:
+    branches:
+      - snn-transform-spinnaker-h0-h1-20261014
+    paths:
+      - 'spinnaker_backend/h2_aplx/**'
+      - '.github/workflows/snn_transform_spinnaker_h2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  h2_host_kernel_gate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install host test dependency
+        run: python -m pip install numpy
+      - name: Show C compiler
+        run: gcc --version
+      - name: Strict host compile
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror \
+            -c spinnaker_backend/h2_aplx/h2_kernels.c \
+            -o /tmp/h2_kernels.o
+      - name: Run bit-exact H2 C kernel parity gate
+        run: python spinnaker_backend/h2_aplx/test_h2_kernels.py
+      - name: Record H2 scope
+        run: |
+          echo 'H2 host kernel gate only.'
+          echo 'This does not claim APLX cross-compilation or SpiNNaker board execution.'
