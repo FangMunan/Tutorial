@@ -1,0 +1,31 @@
+name: SNN Transform Block v1.1 Clean Parity
+
+on:
+  push:
+    branches:
+      - 'snn-transform-block-v1.1-clean-20261014'
+    paths:
+      - 'SNNTransformBlock_v1_1/**'
+      - 'SNNTransformBlock_v1/**'
+      - '.github/workflows/snn_transform_block_v1_1_clean.yml'
+  workflow_dispatch:
+
+jobs:
+  parity:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install PyTorch CPU
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Compile clean package
+        run: |
+          python -m py_compile SNNTransformBlock_v1_1/SNNTransformBlock_v1_1.py
+          python -m py_compile SNNTransformBlock_v1_1/wrappers.py
+          python -m py_compile SNNTransformBlock_v1_1/test_v1_to_v1_1_parity.py
+      - name: Run v1 to v1.1 parity gate
+        run: python -m SNNTransformBlock_v1_1.test_v1_to_v1_1_parity
