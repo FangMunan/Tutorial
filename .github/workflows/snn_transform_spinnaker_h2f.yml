@@ -89,14 +89,6 @@ jobs:
           git -C /tmp/spinnaker_tools checkout 619bd2b0726e970a8500079b5542e745200e62be
           make -C /tmp/spinnaker_tools GNU=1
 
-      - name: Build and install SpiNNFrontEndCommon data-spec C library
-        run: |
-          git clone --branch 7.4.1 --depth 1 https://github.com/SpiNNakerManchester/SpiNNFrontEndCommon.git /tmp/SpiNNFrontEndCommon
-          make -C /tmp/SpiNNFrontEndCommon/c_common/front_end_common_lib \
-            SPINN_DIRS=/tmp/spinnaker_tools GNU=1 install
-          test -s /tmp/spinnaker_tools/lib/libspinn_frontend_common.a
-          test -s /tmp/spinnaker_tools/include/data_specification.h
-
       - name: Cross-compile H2F APLX
         env:
           SPINN_DIRS: /tmp/spinnaker_tools
