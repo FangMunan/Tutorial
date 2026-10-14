@@ -36,7 +36,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
           run-id: 38538624735
-      - name: Compile H1.1 v10
+      - name: Compile H1.1 v11
         run: |
           python -m py_compile spinnaker_backend/h1_fixed_point_emulator.py
           python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint.py
@@ -45,20 +45,20 @@ jobs:
           python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint_v6.py
           python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint_v7.py
           python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint_v9.py
-          python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint_v10.py
-      - name: Run H1.1 v10 actual-checkpoint gate
+          python -m py_compile spinnaker_backend/run_h1_1_frozen_checkpoint_v11.py
+      - name: Run H1.1 v11 actual-checkpoint gate
         run: |
-          python -m spinnaker_backend.run_h1_1_frozen_checkpoint_v10 \
+          python -m spinnaker_backend.run_h1_1_frozen_checkpoint_v11 \
             --checkpoint spinnaker_backend/run/H1_1/source/SNNTransformBlock_v1.pt \
-            --out spinnaker_backend/run/H1_1/result_v10 \
+            --out spinnaker_backend/run/H1_1/result_v11 \
             --batch 8 --steps 6 --change-frac 0.25 --seed 17171
-      - name: Upload H1.1 v10 result and HIR
+      - name: Upload H1.1 v11 result and HIR
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: SNN_TRANSFORM_SPINNAKER_H1_1_V10
+          name: SNN_TRANSFORM_SPINNAKER_H1_1_V11
           path: |
-            spinnaker_backend/run/H1_1/result_v10/H1_1_V2_RESULTS.json
-            spinnaker_backend/run/H1_1/result_v10/SNNTransformBlock_v1_1_HIR_H1_1_v2.npz
-            spinnaker_backend/run/H1_1/H1_1_V10_SENSITIVITY_WEIGHTED_Q.json
+            spinnaker_backend/run/H1_1/result_v11/H1_1_V2_RESULTS.json
+            spinnaker_backend/run/H1_1/result_v11/SNNTransformBlock_v1_1_HIR_H1_1_v2.npz
+            spinnaker_backend/run/H1_1/H1_1_V11_DIRECT_ATTENTION_DECODER.json
           retention-days: 30
