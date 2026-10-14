@@ -1,0 +1,121 @@
+name: SNN Transform SpiNNaker H2F Full Resident Board Package
+
+on:
+  push:
+    branches:
+      - snn-transform-spinnaker-h0-h1-20261014
+    paths:
+      - 'spinnaker_backend/h2f_aplx/**'
+      - 'spinnaker_backend/h2_aplx/h2_kernels.*'
+      - 'spinnaker_backend/h2_aplx/test_h2_actual_hir.py'
+      - 'spinnaker_backend/h2_aplx/test_h2_kernels.py'
+      - '.github/workflows/snn_transform_spinnaker_h2f.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  h2f_build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install host dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy 'SpiNNUtilities==1!7.4.1'
+
+      - name: Download frozen H1.1 functional-v9 HIR
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_SPINNAKER_H1_1_FUNCTIONAL_V9
+          path: spinnaker_backend/run/H2F/source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 38575839809
+
+      - name: Static-check H2F Python
+        run: |
+          python -m py_compile spinnaker_backend/h2f_aplx/h2f_contract.py
+          python -m py_compile spinnaker_backend/h2f_aplx/prepare_h2f_board_package.py
+          python -m py_compile spinnaker_backend/h2f_aplx/run_h2f_spalloc_board.py
+
+      - name: Re-run H2D frozen-HIR host C parity
+        run: |
+          PYTHONPATH=. python spinnaker_backend/h2_aplx/test_h2_actual_hir.py \
+            --hir spinnaker_backend/run/H2F/source/functional_v9/SNNTransformBlock_v1_1_HIR_H1_1_FUNCTIONAL_V9.npz
+
+      - name: Prepare immutable H2F SDRAM package + oracle
+        run: |
+          mkdir -p spinnaker_backend/run/H2F/build
+          PYTHONPATH=. python spinnaker_backend/h2f_aplx/prepare_h2f_board_package.py \
+            --hir spinnaker_backend/run/H2F/source/functional_v9/SNNTransformBlock_v1_1_HIR_H1_1_FUNCTIONAL_V9.npz \
+            --out spinnaker_backend/run/H2F/build/H2F_BOARD_PACKAGE.npz \
+            --steps 6 --change-frac 0.25 --seed 17171
+
+      - name: Validate H2F package contract
+        run: |
+          PYTHONPATH=. python - <<'PY'
+          import json, numpy as np
+          from pathlib import Path
+          from spinnaker_backend.h2f_aplx.h2f_contract import (
+              H2F_MAGIC, H2F_VERSION, H2F_HEADER_WORDS, output_word_count)
+          p=Path('spinnaker_backend/run/H2F/build/H2F_BOARD_PACKAGE.npz')
+          z=np.load(p,allow_pickle=False)
+          meta=json.loads(bytes(z['package_metadata_json_utf8'].tolist()).decode())
+          h=z['header_u32']
+          assert h.size==H2F_HEADER_WORDS and int(h[0])==H2F_MAGIC and int(h[1])==H2F_VERSION
+          assert meta['format']=='SNNTransform-H2F-board-package-v1'
+          assert meta['region_words']['output']==output_word_count(16,32,2,32)
+          assert [x['changed_tokens'] for x in meta['trajectory']]==[16,4,4,4,4,4]
+          for k in ('y','H','g','pq','pk','v'): assert f'oracle_{k}' in z.files
+          print({'H2F_PACKAGE_GATE':'PASS','region_words':meta['region_words']})
+          PY
+
+      - name: Install GNU Arm embedded toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi make perl git
+          arm-none-eabi-gcc --version
+
+      - name: Checkout and build pinned low-level SpiNNaker tools
+        run: |
+          git clone https://github.com/SpiNNakerManchester/spinnaker_tools.git /tmp/spinnaker_tools
+          git -C /tmp/spinnaker_tools checkout 619bd2b0726e970a8500079b5542e745200e62be
+          make -C /tmp/spinnaker_tools GNU=1
+
+      - name: Build and install SpiNNFrontEndCommon data-spec C library
+        run: |
+          git clone --branch 7.4.1 --depth 1 https://github.com/SpiNNakerManchester/SpiNNFrontEndCommon.git /tmp/SpiNNFrontEndCommon
+          make -C /tmp/SpiNNFrontEndCommon/c_common/front_end_common_lib \
+            SPINN_DIRS=/tmp/spinnaker_tools GNU=1 install
+          test -s /tmp/spinnaker_tools/lib/libspinn_frontend_common.a
+          test -s /tmp/spinnaker_tools/include/data_specification.h
+
+      - name: Cross-compile H2F APLX
+        env:
+          SPINN_DIRS: /tmp/spinnaker_tools
+          SPINN_INSTALL_DIR: /tmp/spinnaker_tools
+        run: |
+          make -C spinnaker_backend/h2f_aplx GNU=1 DEBUG=1
+          test -s spinnaker_backend/h2f_aplx/snn_transform_h2f.aplx
+          test -s spinnaker_backend/h2f_aplx/build/gnu/snn_transform_h2f.elf
+          arm-none-eabi-nm spinnaker_backend/h2f_aplx/build/gnu/snn_transform_h2f.elf | grep ' c_main$'
+          ls -lh spinnaker_backend/h2f_aplx/snn_transform_h2f.aplx
+
+      - name: Upload H2F board-test bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_H2F_BOARD_BUNDLE
+          path: |
+            spinnaker_backend/h2f_aplx/snn_transform_h2f.aplx
+            spinnaker_backend/h2f_aplx/build/gnu/snn_transform_h2f.elf
+            spinnaker_backend/h2f_aplx/build/gnu/snn_transform_h2f.txt
+            spinnaker_backend/h2f_aplx/run_h2f_spalloc_board.py
+            spinnaker_backend/run/H2F/build/H2F_BOARD_PACKAGE.npz
+          retention-days: 30
