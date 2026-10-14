@@ -299,7 +299,9 @@ class EventCachedLinearAttention(nn.Module):
             value = state.v.clone()
 
             # Reference implementation: simple batch loop.  Event-native backends
-            # should consume the same changed-token set directly.
+            # should consume the same changed-token set directly.  H/g deltas are
+            # batch-local by contract; changing sample b must never mutate another
+            # sample's resident state.
             for b in range(B):
                 idx = torch.nonzero(changed[b], as_tuple=False).flatten()
                 if idx.numel() == 0:
@@ -312,9 +314,10 @@ class EventCachedLinearAttention(nn.Module):
 
                 old_pk = state.pk[b:b + 1, :, idx, :]
                 old_v = state.v[b:b + 1, :, idx, :]
-                H = H - torch.einsum("bhnm,bhnd->bhmd", old_pk, old_v)
-                H = H + torch.einsum("bhnm,bhnd->bhmd", new_pk, new_v)
-                g = g - old_pk.sum(dim=2) + new_pk.sum(dim=2)
+                H[b:b + 1] -= torch.einsum("bhnm,bhnd->bhmd", old_pk, old_v)
+                H[b:b + 1] += torch.einsum("bhnm,bhnd->bhmd", new_pk, new_v)
+                g[b:b + 1] -= old_pk.sum(dim=2)
+                g[b:b + 1] += new_pk.sum(dim=2)
 
                 pq[b, :, idx, :] = new_pq[0]
                 pk[b, :, idx, :] = new_pk[0]
