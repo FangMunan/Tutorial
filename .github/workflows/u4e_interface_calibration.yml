@@ -1,0 +1,54 @@
+name: SNN Transform U4E Interface Calibration
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - snn-transform-u4-sparse-tail-20261014
+    paths:
+      - 'unified_snn_transform/run_u4e_interface_calibration.py'
+      - '.github/workflows/u4e_interface_calibration.yml'
+
+jobs:
+  u4e:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Compile
+        run: python -m py_compile unified_snn_transform/run_u4e_interface_calibration.py
+      - name: Run U4E calibration
+        run: |
+          mkdir -p unified_snn_transform/run/U4E
+          python unified_snn_transform/run_u4e_interface_calibration.py \
+            --out unified_snn_transform/run/U4E \
+            --tokens 16 --d 32 --heads 2 --features 32 --ff 64 --value-dim 8 \
+            --train-steps 900 --train-batch 128 \
+            --eval-batches 10 --eval-batch 64 \
+            --q-topn 12 --k-pool 36 --joint-topk 8 \
+            --seed 71 --threads 4 | tee unified_snn_transform/run/U4E/run.log
+      - name: Show summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, os
+          p='unified_snn_transform/run/U4E/U4E_RESULTS.json'
+          if os.path.exists(p):
+              d=json.load(open(p))
+              print(json.dumps({'stage':d['stage'],'PASS':d['PASS'],'selected_Q':d['selected_Q'],
+                                'selected_K':d['selected_K'],'heldout':d['heldout'],
+                                'gates':d['gates'],'decision':d['decision']},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: SNN_TRANSFORM_U4E_INTERFACE_CALIBRATION
+          path: unified_snn_transform/run/U4E
+          retention-days: 30
