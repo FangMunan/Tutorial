@@ -11,6 +11,7 @@
 #define H2_F_H 20
 #define H2_F_MEM 22
 #define H2_F_DEC 20
+#define H2_LN_EPS_Q40 10995116LL
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,6 +19,9 @@ extern "C" {
 
 /* Symmetric round-to-nearest arithmetic right shift. */
 int64_t h2_rshift_round_i64(int64_t x, unsigned shift);
+
+/* Integer square root: floor(sqrt(x)). */
+uint64_t h2_isqrt_u64(uint64_t x);
 
 /*
  * Compute round((num * 2^shift) / den) without forming num<<shift.
@@ -47,6 +51,48 @@ void h2_sparse_linear_q20(
     const int32_t *values,
     const int32_t *bias,
     uint32_t out_features,
+    int32_t *out);
+
+/* Exact H1.1 integer LayerNorm, Q20 input/gamma/beta -> Q20 output. */
+void h2_layernorm_q20(
+    const int32_t *x,
+    uint32_t n_rows,
+    uint32_t width,
+    const int32_t *gamma,
+    const int32_t *beta,
+    int32_t *out);
+
+/*
+ * Frozen stable_a projection.
+ * x layout:     [tokens, heads, head_dim] Q20
+ * omega layout: [heads, features, head_dim] Q20
+ * out layout:   [tokens, heads, features] Q20
+ * scale_q20 is the offline-compiled head_dim^(-1/4) factor in Q20.
+ */
+void h2_stable_a_q20(
+    const int32_t *x,
+    uint32_t tokens,
+    uint32_t heads,
+    uint32_t head_dim,
+    const int32_t *omega,
+    uint32_t features,
+    int32_t scale_q20,
+    int is_query,
+    int32_t *out);
+
+/*
+ * Fused Izhikevich RS substeps + online trajectory decoder.
+ * a is Q20; bias/gain are Q22; decoder is Q20.  out_frac must be <= 30 and
+ * is H2_F_PQ (query) or H2_F_PK (key) for the frozen contract.
+ */
+void h2_izh_decode_q20(
+    const int32_t *a,
+    uint32_t count,
+    int32_t bias_q22,
+    int32_t gain_q22,
+    uint32_t window_ms,
+    const int32_t *decoder_q20,
+    uint32_t out_frac,
     int32_t *out);
 
 /*
