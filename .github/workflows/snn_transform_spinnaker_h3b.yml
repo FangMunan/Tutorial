@@ -1,0 +1,105 @@
+name: SNN Transform SpiNNaker H3B Single-Chip Scaling
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  h3b_build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: snn-transform-spinnaker-h0-h1-20261014
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install host dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy 'SpiNNUtilities==1!7.4.1'
+
+      - name: Download frozen H1.1 functional-v9 HIR
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_SPINNAKER_H1_1_FUNCTIONAL_V9
+          path: spinnaker_backend/run/H3B/source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 38575839809
+
+      - name: Static-check H3B Python
+        run: |
+          python -m py_compile spinnaker_backend/h3b_single_chip/h3b_contract.py
+          python -m py_compile spinnaker_backend/h3b_single_chip/prepare_h3b_package.py
+          python -m py_compile spinnaker_backend/h3b_single_chip/run_h3b_single_chip.py
+
+      - name: Generate H3B0 P2 N64 package and host distributed parity gate
+        run: |
+          mkdir -p spinnaker_backend/run/H3B/packages
+          HIR=spinnaker_backend/run/H3B/source/functional_v9/SNNTransformBlock_v1_1_HIR_H1_1_FUNCTIONAL_V9.npz
+          PYTHONPATH=. python spinnaker_backend/h3b_single_chip/prepare_h3b_package.py \
+            --hir "$HIR" \
+            --out spinnaker_backend/run/H3B/packages/H3B_P2_N64.npz \
+            --workers 2 --local-tokens 32 --steps 6 --change-frac 0.25 --seed 37171 --pacing-us 1
+
+      - name: Inspect H3B0 package gate
+        run: |
+          PYTHONPATH=. python - <<'PY'
+          import json, numpy as np
+          p='spinnaker_backend/run/H3B/packages/H3B_P2_N64.npz'
+          z=np.load(p,allow_pickle=False)
+          m=json.loads(bytes(z['package_metadata_json_utf8'].tolist()).decode())
+          assert m['workers']==2 and m['local_tokens']==32 and m['global_tokens']==64
+          assert m['host_distributed_gate']['PASS'] is True
+          assert m['host_distributed_gate']['final_arrays_bit_exact'] is True
+          print(json.dumps({
+              'stage':'H3B0_PREBOARD', 'PASS':True,
+              'workers':m['workers'], 'global_tokens':m['global_tokens'],
+              'worker_arena_bytes_requested':m['worker_arena_bytes_requested'],
+              'expected_qkv_evals_per_worker':m['expected_qkv_evals_per_worker'],
+              'init_gather_payload_words':m['init_gather_payload_words_per_nonzero_worker'],
+              'hg_broadcast_payload_words':m['hg_broadcast_payload_words'],
+          },indent=2))
+          PY
+
+      - name: Install GNU Arm embedded toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi make perl git
+          arm-none-eabi-gcc --version
+
+      - name: Checkout and build pinned low-level SpiNNaker tools
+        run: |
+          git clone https://github.com/SpiNNakerManchester/spinnaker_tools.git /tmp/spinnaker_tools
+          git -C /tmp/spinnaker_tools checkout 619bd2b0726e970a8500079b5542e745200e62be
+          make -C /tmp/spinnaker_tools GNU=1
+
+      - name: Cross-compile H3B worker APLX
+        env:
+          SPINN_DIRS: /tmp/spinnaker_tools
+          SPINN_INSTALL_DIR: /tmp/spinnaker_tools
+        run: |
+          make -C spinnaker_backend/h3b_single_chip GNU=1 DEBUG=1
+          test -s spinnaker_backend/h3b_single_chip/snn_transform_h3b_worker.aplx
+          test -s spinnaker_backend/h3b_single_chip/build/gnu/snn_transform_h3b_worker.elf
+          arm-none-eabi-nm spinnaker_backend/h3b_single_chip/build/gnu/snn_transform_h3b_worker.elf | grep ' c_main$'
+          ls -lh spinnaker_backend/h3b_single_chip/snn_transform_h3b_worker.aplx
+
+      - name: Upload H3B0 board bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_H3B0_SINGLE_CHIP_BUNDLE
+          path: |
+            spinnaker_backend/h3b_single_chip/snn_transform_h3b_worker.aplx
+            spinnaker_backend/h3b_single_chip/build/gnu/snn_transform_h3b_worker.elf
+            spinnaker_backend/h3b_single_chip/build/gnu/snn_transform_h3b_worker.txt
+            spinnaker_backend/h3b_single_chip/run_h3b_single_chip.py
+            spinnaker_backend/h2f_aplx/run_h2f_spalloc_board.py
+            spinnaker_backend/run/H3B/packages/H3B_P2_N64.npz
+            spinnaker_backend/h3b_single_chip/H3B_STATUS.md
+          retention-days: 30
