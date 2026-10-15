@@ -1,0 +1,32 @@
+#ifndef SNN_TRANSFORM_H3A_CONTRACT_H
+#define SNN_TRANSFORM_H3A_CONTRACT_H
+
+#include <stdint.h>
+#include "../h2f_aplx/h2f_contract.h"
+
+#define H3A_MAGIC 0x48334131u       /* H3A1 */
+#define H3A_OUTPUT_MAGIC 0x4833414Fu /* H3AO */
+#define H3A_VERSION 1u
+#define H3A_HEADER_WORDS H2F_HEADER_WORDS
+#define H3A_OUTPUT_HEADER_WORDS 16u
+
+enum {
+    H3A_OUT_MAGIC = 0,
+    H3A_OUT_RC = 1,
+    H3A_OUT_STEPS = 2,
+    H3A_OUT_Q_EVALS = 3,
+    H3A_OUT_K_EVALS = 4,
+    H3A_OUT_V_EVALS = 5,
+    H3A_OUT_CHIP = 6,
+    H3A_OUT_CORE_APP = 7,
+    H3A_OUT_TOKENS = 8,
+    H3A_OUT_ARENA_BYTES = 9,
+    H3A_OUT_HEAP_FREE_BEFORE = 10,
+    H3A_OUT_HEAP_MAX_BEFORE = 11,
+    H3A_OUT_HEAP_FREE_AFTER = 12,
+    H3A_OUT_HEAP_MAX_AFTER = 13,
+    H3A_OUT_ELAPSED_MS = 14,
+    H3A_OUT_RESERVED = 15
+};
+
+#endif
