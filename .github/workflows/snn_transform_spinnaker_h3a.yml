@@ -9,6 +9,7 @@ on:
       - 'spinnaker_backend/h2_aplx/h2_kernels.*'
       - 'spinnaker_backend/h2_aplx/test_h2_actual_hir.py'
       - 'spinnaker_backend/h2f_aplx/h2f_contract.*'
+      - 'spinnaker_backend/h2f_aplx/run_h2f_spalloc_board.py'
       - '.github/workflows/snn_transform_spinnaker_h3a.yml'
   workflow_dispatch:
 
@@ -44,6 +45,7 @@ jobs:
           python -m py_compile spinnaker_backend/h3a_single_core/h3a_contract.py
           python -m py_compile spinnaker_backend/h3a_single_core/prepare_h3a_package.py
           python -m py_compile spinnaker_backend/h3a_single_core/run_h3a_single_core_point.py
+          python -m py_compile spinnaker_backend/h3a_single_core/run_h3a_sweep.py
 
       - name: Generate variable-N packages and host-C parity gates
         run: |
@@ -107,6 +109,8 @@ jobs:
             spinnaker_backend/h3a_single_core/build/gnu/snn_transform_h3a.elf
             spinnaker_backend/h3a_single_core/build/gnu/snn_transform_h3a.txt
             spinnaker_backend/h3a_single_core/run_h3a_single_core_point.py
+            spinnaker_backend/h3a_single_core/run_h3a_sweep.py
+            spinnaker_backend/h2f_aplx/run_h2f_spalloc_board.py
             spinnaker_backend/run/H3A/H3A_MANIFEST.json
             spinnaker_backend/run/H3A/packages/*.npz
           retention-days: 30
