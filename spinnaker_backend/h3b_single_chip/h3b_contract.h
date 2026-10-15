@@ -1,0 +1,53 @@
+#ifndef SNN_TRANSFORM_H3B_CONTRACT_H
+#define SNN_TRANSFORM_H3B_CONTRACT_H
+
+#include <stdint.h>
+#include "../h2f_aplx/h2f_contract.h"
+
+#define H3B_MAGIC 0x48334231u
+#define H3B_OUTPUT_MAGIC 0x4833424fu
+#define H3B_VERSION 1u
+#define H3B_HEADER_WORDS 128u
+#define H3B_OUTPUT_HEADER_WORDS 24u
+#define H3B_MAX_WORKERS 16u
+#define H3B_N_KEYS 4096u
+
+#define H3B_CFG_RANK 96u
+#define H3B_CFG_N_WORKERS 97u
+#define H3B_CFG_GLOBAL_TOKENS 98u
+#define H3B_CFG_SEND_KEY 99u
+#define H3B_CFG_PEER_KEYS 100u
+#define H3B_CFG_PACING_US 116u
+
+#define H3B_KEY_READY_BASE 3000u
+#define H3B_KEY_DONE_BASE 3020u
+#define H3B_KEY_GRANT_BASE 3040u
+#define H3B_KEY_BCAST_DONE_BASE 3060u
+
+/* output header */
+#define H3B_OUT_MAGIC 0u
+#define H3B_OUT_RC 1u
+#define H3B_OUT_STEPS 2u
+#define H3B_OUT_RANK 3u
+#define H3B_OUT_N_WORKERS 4u
+#define H3B_OUT_GLOBAL_TOKENS 5u
+#define H3B_OUT_LOCAL_TOKENS 6u
+#define H3B_OUT_Q_EVALS 7u
+#define H3B_OUT_K_EVALS 8u
+#define H3B_OUT_V_EVALS 9u
+#define H3B_OUT_TX_PACKETS 10u
+#define H3B_OUT_RX_PACKETS 11u
+#define H3B_OUT_TX_RETRIES 12u
+#define H3B_OUT_PROTOCOL_ERRORS 13u
+#define H3B_OUT_ELAPSED_MS 14u
+#define H3B_OUT_CHIP 15u
+#define H3B_OUT_CORE_APP 16u
+#define H3B_OUT_READY_EVENTS 17u
+#define H3B_OUT_GATHER_PHASES 18u
+#define H3B_OUT_BCAST_PHASES 19u
+#define H3B_OUT_ARENA_BYTES 20u
+#define H3B_OUT_RESERVED0 21u
+#define H3B_OUT_RESERVED1 22u
+#define H3B_OUT_RESERVED2 23u
+
+#endif
