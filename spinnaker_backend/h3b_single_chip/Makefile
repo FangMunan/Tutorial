@@ -1,5 +1,5 @@
 APP := snn_transform_h3b_worker
-OBJECTS = $(BUILD_DIR)snn_transform_h3b_worker.o $(BUILD_DIR)h2_kernels.o
+OBJECTS = $(BUILD_DIR)snn_transform_h3b_worker_v2.o $(BUILD_DIR)h2_kernels.o
 CFLAGS += -I../h2_aplx -I../h2f_aplx
 
 ifdef SPINN_DIRS
