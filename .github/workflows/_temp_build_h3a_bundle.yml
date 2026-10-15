@@ -1,0 +1,95 @@
+name: TEMP Build H3A Board Bundle
+
+on:
+  push:
+    branches: [camp4]
+    paths: ['.github/workflows/_temp_build_h3a_bundle.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build_h3a:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: snn-transform-spinnaker-h0-h1-20261014
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install host dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy 'SpiNNUtilities==1!7.4.1'
+      - name: Download frozen H1.1 functional-v9 HIR
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_SPINNAKER_H1_1_FUNCTIONAL_V9
+          path: spinnaker_backend/run/H3A/source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 38575839809
+      - name: Generate variable-N packages
+        run: |
+          mkdir -p spinnaker_backend/run/H3A/packages
+          HIR=spinnaker_backend/run/H3A/source/functional_v9/SNNTransformBlock_v1_1_HIR_H1_1_FUNCTIONAL_V9.npz
+          for N in 16 24 32 36 38 40 42 44 48; do
+            PYTHONPATH=. python spinnaker_backend/h3a_single_core/prepare_h3a_package.py \
+              --hir "$HIR" \
+              --out "spinnaker_backend/run/H3A/packages/H3A_N${N}.npz" \
+              --tokens "$N" --steps 6 --change-frac 0.25 --seed 27171
+          done
+      - name: Build manifest
+        run: |
+          PYTHONPATH=. python - <<'PY'
+          import json, numpy as np
+          from pathlib import Path
+          rows=[]
+          for p in sorted(Path('spinnaker_backend/run/H3A/packages').glob('H3A_N*.npz'), key=lambda p:int(p.stem.split('N')[-1])):
+              z=np.load(p,allow_pickle=False)
+              m=json.loads(bytes(z['package_metadata_json_utf8'].tolist()).decode())
+              rows.append({'tokens':m['tokens'],'arena_bytes_requested':m['arena_bytes_requested'],'trajectory_words':m['region_words']['trajectory'],'output_words':m['region_words']['output'],'host_integer_gate':m['host_integer_gate']['numpy_vs_composed_C']})
+          out={'stage':'H3A_SINGLE_CORE_PREBOARD','PASS':True,'varied_axis':'N_only','fixed':'D32 H2 M32 FF64 L1','points':rows}
+          Path('spinnaker_backend/run/H3A/H3A_MANIFEST.json').write_text(json.dumps(out,indent=2))
+          print(json.dumps(out,indent=2))
+          PY
+      - name: Install ARM toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi make perl git
+      - name: Build pinned SpiNNaker tools
+        run: |
+          git clone https://github.com/SpiNNakerManchester/spinnaker_tools.git /tmp/spinnaker_tools
+          git -C /tmp/spinnaker_tools checkout 619bd2b0726e970a8500079b5542e745200e62be
+          make -C /tmp/spinnaker_tools GNU=1
+      - name: Cross-compile H3A APLX
+        env:
+          SPINN_DIRS: /tmp/spinnaker_tools
+          SPINN_INSTALL_DIR: /tmp/spinnaker_tools
+        run: |
+          make -C spinnaker_backend/h3a_single_core GNU=1 DEBUG=1
+          test -s spinnaker_backend/h3a_single_core/snn_transform_h3a.aplx
+      - name: Assemble ready folder
+        run: |
+          mkdir -p H3A_BOARD_READY/packages
+          mkdir -p H3A_BOARD_READY/spinnaker_backend/h3a_single_core
+          mkdir -p H3A_BOARD_READY/spinnaker_backend/h2f_aplx
+          cp spinnaker_backend/h3a_single_core/snn_transform_h3a.aplx H3A_BOARD_READY/
+          cp spinnaker_backend/h3a_single_core/run_h3a_single_core_point.py H3A_BOARD_READY/spinnaker_backend/h3a_single_core/
+          cp spinnaker_backend/h3a_single_core/run_h3a_sweep.py H3A_BOARD_READY/spinnaker_backend/h3a_single_core/
+          cp spinnaker_backend/h2f_aplx/run_h2f_spalloc_board.py H3A_BOARD_READY/spinnaker_backend/h2f_aplx/
+          cp spinnaker_backend/run/H3A/H3A_MANIFEST.json H3A_BOARD_READY/
+          cp spinnaker_backend/run/H3A/packages/*.npz H3A_BOARD_READY/packages/
+          touch H3A_BOARD_READY/spinnaker_backend/__init__.py
+          touch H3A_BOARD_READY/spinnaker_backend/h3a_single_core/__init__.py
+          touch H3A_BOARD_READY/spinnaker_backend/h2f_aplx/__init__.py
+          sha256sum H3A_BOARD_READY/snn_transform_h3a.aplx H3A_BOARD_READY/packages/*.npz > H3A_BOARD_READY/SHA256SUMS.txt
+      - name: Upload ready bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: H3A_BOARD_READY
+          path: H3A_BOARD_READY
+          retention-days: 30
