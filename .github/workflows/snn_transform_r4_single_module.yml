@@ -50,8 +50,10 @@ jobs:
         run: |
           set -euo pipefail
           python -m py_compile r4_single_module_recovery.py
-          if grep -nE '\.backward\(|torch\.optim|optimizer' r4_single_module_recovery.py; then
-            echo 'Forbidden backprop/optimizer token found'; exit 1
+          # Audit actual forbidden APIs only. Do not reject harmless prose such as
+          # "NO optimizer is used" or JSON audit fields named optimizer_used.
+          if grep -nE '\.backward\(|torch\.optim' r4_single_module_recovery.py; then
+            echo 'Forbidden backprop/torch.optim API found'; exit 1
           fi
       - name: Run R4 recovery gate
         working-directory: snn_transform_r4
