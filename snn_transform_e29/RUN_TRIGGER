@@ -1,0 +1,5 @@
+P4-E29 forward-equivalence cloud gate
+B0 reference epochs: 30
+RF widths: 64,128,256,512
+RF modes: gaussian,p3norm
+H/g training: disabled
