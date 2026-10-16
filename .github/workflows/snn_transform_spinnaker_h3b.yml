@@ -46,34 +46,65 @@ jobs:
           python -m py_compile spinnaker_backend/h3b_single_chip/h3b_contract.py
           python -m py_compile spinnaker_backend/h3b_single_chip/prepare_h3b_package.py
           python -m py_compile spinnaker_backend/h3b_single_chip/run_h3b_single_chip.py
+          python -m py_compile spinnaker_backend/h3b_single_chip/run_h3b1_sweep.py
 
-      - name: Generate H3B0 P2 N64 package and host distributed parity gate
+      - name: Generate H3B0 P2 N64 regression package
         run: |
           mkdir -p spinnaker_backend/run/H3B/packages
           HIR=spinnaker_backend/run/H3B/source/functional_v9/SNNTransformBlock_v1_1_HIR_H1_1_FUNCTIONAL_V9.npz
           PYTHONPATH=. python spinnaker_backend/h3b_single_chip/prepare_h3b_package.py \
             --hir "$HIR" \
             --out spinnaker_backend/run/H3B/packages/H3B_P2_N64.npz \
-            --workers 2 --local-tokens 32 --steps 6 --change-frac 0.25 --seed 37171 --pacing-us 1
+            --workers 2 --local-tokens 32 --steps 6 --change-frac 0.25 \
+            --seed 37171 --pacing-us 1 \
+            --stage H3B0_DISTRIBUTED_CORRECTNESS
 
-      - name: Inspect H3B0 package gate
+      - name: Generate H3B1 balanced weak-scaling packages
+        run: |
+          HIR=spinnaker_backend/run/H3B/source/functional_v9/SNNTransformBlock_v1_1_HIR_H1_1_FUNCTIONAL_V9.npz
+          for P in 2 4 8 16; do
+            N=$((32 * P))
+            PYTHONPATH=. python spinnaker_backend/h3b_single_chip/prepare_h3b_package.py \
+              --hir "$HIR" \
+              --out "spinnaker_backend/run/H3B/packages/H3B1_P${P}_N${N}.npz" \
+              --workers "$P" --local-tokens 32 --steps 6 --change-frac 0.25 \
+              --seed 47171 --pacing-us 1 --balanced-local-changes \
+              --stage H3B1_WEAK_SCALING
+          done
+
+      - name: Inspect H3B host gates
         run: |
           PYTHONPATH=. python - <<'PY'
           import json, numpy as np
-          p='spinnaker_backend/run/H3B/packages/H3B_P2_N64.npz'
-          z=np.load(p,allow_pickle=False)
+          from pathlib import Path
+
+          p0=Path('spinnaker_backend/run/H3B/packages/H3B_P2_N64.npz')
+          z=np.load(p0,allow_pickle=False)
           m=json.loads(bytes(z['package_metadata_json_utf8'].tolist()).decode())
-          assert m['workers']==2 and m['local_tokens']==32 and m['global_tokens']==64
+          assert m['workers']==2 and m['global_tokens']==64
           assert m['host_distributed_gate']['PASS'] is True
           assert m['host_distributed_gate']['final_arrays_bit_exact'] is True
-          print(json.dumps({
-              'stage':'H3B0_PREBOARD', 'PASS':True,
-              'workers':m['workers'], 'global_tokens':m['global_tokens'],
-              'worker_arena_bytes_requested':m['worker_arena_bytes_requested'],
-              'expected_qkv_evals_per_worker':m['expected_qkv_evals_per_worker'],
-              'init_gather_payload_words':m['init_gather_payload_words_per_nonzero_worker'],
-              'hg_broadcast_payload_words':m['hg_broadcast_payload_words'],
-          },indent=2))
+
+          rows=[]
+          for P in (2,4,8,16):
+              N=32*P
+              p=Path(f'spinnaker_backend/run/H3B/packages/H3B1_P{P}_N{N}.npz')
+              z=np.load(p,allow_pickle=False)
+              m=json.loads(bytes(z['package_metadata_json_utf8'].tolist()).decode())
+              assert m['stage']=='H3B1_WEAK_SCALING'
+              assert m['workers']==P and m['local_tokens']==32 and m['global_tokens']==N
+              assert m['balanced_local_changes'] is True
+              assert m['local_changes_per_update']==8
+              assert m['expected_qkv_evals_per_worker']==[72]*P
+              assert m['host_distributed_gate']['PASS'] is True
+              assert m['host_distributed_gate']['final_arrays_bit_exact'] is True
+              rows.append({
+                  'workers':P, 'global_tokens':N,
+                  'arena_bytes_per_worker':m['worker_arena_bytes_requested'],
+                  'qkv_evals_per_worker':72,
+                  'host_bit_exact':True,
+              })
+          print(json.dumps({'stage':'H3B1_PREBOARD','PASS':True,'points':rows},indent=2))
           PY
 
       - name: Install GNU Arm embedded toolchain
@@ -128,9 +159,48 @@ jobs:
           print('H3B0 staged bundle imports: PASS')
           PY
 
+      - name: Stage runnable H3B1 sweep bundle
+        run: |
+          rm -rf H3B1_BOARD_READY
+          mkdir -p H3B1_BOARD_READY/spinnaker_backend/h3b_single_chip
+          mkdir -p H3B1_BOARD_READY/spinnaker_backend/h2f_aplx
+          mkdir -p H3B1_BOARD_READY/run/H3B/packages
+          touch H3B1_BOARD_READY/spinnaker_backend/__init__.py
+          touch H3B1_BOARD_READY/spinnaker_backend/h3b_single_chip/__init__.py
+          touch H3B1_BOARD_READY/spinnaker_backend/h2f_aplx/__init__.py
+          cp spinnaker_backend/h3b_single_chip/snn_transform_h3b_worker.aplx H3B1_BOARD_READY/spinnaker_backend/h3b_single_chip/
+          cp spinnaker_backend/h3b_single_chip/run_h3b_single_chip.py H3B1_BOARD_READY/spinnaker_backend/h3b_single_chip/
+          cp spinnaker_backend/h3b_single_chip/run_h3b1_sweep.py H3B1_BOARD_READY/spinnaker_backend/h3b_single_chip/
+          cp spinnaker_backend/h3b_single_chip/h3b_contract.py H3B1_BOARD_READY/spinnaker_backend/h3b_single_chip/
+          cp spinnaker_backend/h3b_single_chip/H3B_STATUS.md H3B1_BOARD_READY/spinnaker_backend/h3b_single_chip/
+          cp spinnaker_backend/h2f_aplx/run_h2f_spalloc_board.py H3B1_BOARD_READY/spinnaker_backend/h2f_aplx/
+          cp spinnaker_backend/h2f_aplx/h2f_contract.py H3B1_BOARD_READY/spinnaker_backend/h2f_aplx/
+          cp spinnaker_backend/run/H3B/packages/H3B1_P*_N*.npz H3B1_BOARD_READY/run/H3B/packages/
+          cat > H3B1_BOARD_READY/README_RUN.txt <<'TXT'
+          Run from this directory:
+          python spinnaker_backend/h3b_single_chip/run_h3b1_sweep.py \
+            --aplx spinnaker_backend/h3b_single_chip/snn_transform_h3b_worker.aplx \
+            --package-dir run/H3B/packages \
+            --source-config /home/jovyan/.spynnaker.cfg \
+            --workers 2,4,8,16
+          TXT
+          PYTHONPATH=H3B1_BOARD_READY python - <<'PY'
+          import spinnaker_backend.h2f_aplx.run_h2f_spalloc_board
+          import spinnaker_backend.h3b_single_chip.h3b_contract
+          import spinnaker_backend.h3b_single_chip.run_h3b1_sweep
+          print('H3B1 staged bundle imports: PASS')
+          PY
+
       - name: Upload H3B0 board bundle
         uses: actions/upload-artifact@v4
         with:
           name: SNN_TRANSFORM_H3B0_SINGLE_CHIP_BUNDLE
           path: H3B0_BOARD_READY
+          retention-days: 30
+
+      - name: Upload H3B1 weak-scaling bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_H3B1_SINGLE_CHIP_SWEEP_BUNDLE
+          path: H3B1_BOARD_READY
           retention-days: 30
