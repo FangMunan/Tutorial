@@ -1,0 +1,7 @@
+R5A joint final-block FFN matrix recovery
+source: E29 B0->H/g transferred model
+damage: W1=0, W2=0.5*gold, biases unchanged
+plastic parameters: final-block W1 and W2 only
+learning: local antithetic forward perturbation + fast/slow synaptic states
+backprop: disabled
+learned feedback network: none
