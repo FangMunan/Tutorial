@@ -1,0 +1,92 @@
+name: SNN Transform R4 Single-Module Recovery
+
+on:
+  push:
+    branches: [camp4]
+    paths:
+      - 'snn_transform_r4/RUN_TRIGGER'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  r4_single_module:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: camp4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn matplotlib
+      - name: Recover B0 checkpoint and codebook from E29
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p snn_transform_r4/run_r4
+          gh run download 38964779791 \
+            --repo FangMunan/Tutorial \
+            --name SNN_TRANSFORM_E29_FORWARD_EQUIVALENCE \
+            --dir snn_transform_r4/run_r4/e29_source
+          test -f snn_transform_r4/run_r4/e29_source/b0/best.pt
+          test -f snn_transform_r4/run_r4/e29_source/b0/codebook.npy
+      - name: Download MNIST
+        working-directory: snn_transform_r4
+        run: |
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve('https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz','run_r4/mnist.npz')
+          PY
+      - name: Static no-backprop audit
+        working-directory: snn_transform_r4
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile r4_single_module_recovery.py
+          if grep -nE '\.backward\(|torch\.optim|optimizer' r4_single_module_recovery.py; then
+            echo 'Forbidden backprop/optimizer token found'; exit 1
+          fi
+      - name: Run R4 recovery gate
+        working-directory: snn_transform_r4
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p run_r4/result
+          python r4_single_module_recovery.py \
+            --data run_r4/mnist.npz \
+            --checkpoint run_r4/e29_source/b0/best.pt \
+            --codebook run_r4/e29_source/b0/codebook.npy \
+            --out run_r4/result \
+            --features 256 \
+            --rf-kind p3norm \
+            --rf-seed 29257 \
+            --epochs 5 \
+            --batch 128 \
+            --lr 0.2 \
+            --sigma 0.05 \
+            --threads 2 | tee run_r4/r4_console.log
+      - name: Show R4 metrics
+        if: always()
+        working-directory: snn_transform_r4
+        run: |
+          if [ -f run_r4/result/metrics.json ]; then cat run_r4/result/metrics.json; fi
+      - name: Upload R4 artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R4_SINGLE_MODULE_RECOVERY
+          path: |
+            snn_transform_r4/run_r4/result/metrics.json
+            snn_transform_r4/run_r4/result/history.csv
+            snn_transform_r4/run_r4/result/recovery_checkpoint.pt
+            snn_transform_r4/run_r4/result/*.png
+            snn_transform_r4/run_r4/r4_console.log
+          if-no-files-found: warn
+          retention-days: 30
