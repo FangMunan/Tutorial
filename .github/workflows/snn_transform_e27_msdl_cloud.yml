@@ -1,4 +1,4 @@
-name: SNN Transform E27 MSDL Cloud Gate
+name: SNN Transform E28 Tokenwise MSDL Cloud Gate
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
       epochs:
         description: 'Maximum epochs; wall budget can stop earlier'
         required: false
-        default: '30'
+        default: '12'
       lr_scale:
         description: 'Global multiplier for local MSDL rates'
         required: false
@@ -29,7 +29,7 @@ permissions:
   actions: read
 
 jobs:
-  e27_msdl:
+  e28_tokenwise_msdl:
     runs-on: ubuntu-24.04
     timeout-minutes: 80
     steps:
@@ -43,40 +43,44 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install numpy torch scikit-learn matplotlib
-      - name: Static checks
+      - name: Static and tokenwise smoke checks
         working-directory: snn_transform_e27
         run: |
           python -m py_compile model.py msdl.py train.py
           python - <<'PY'
           import torch
           from model import Model,L,K,MASK
-          m=Model(27101).eval()
-          x=torch.randint(0,K,(2,L)); x[:,::3]=MASK
+          from msdl import Trainer
+          torch.set_num_threads(2)
+          m=Model(27101)
+          x=torch.randint(0,K,(4,L))
           with torch.no_grad(): y,tr=m(x,True)
-          assert y.shape==(2,49,64)
-          assert len(tr)==4
-          assert torch.isfinite(y).all()
-          print({'params':sum(p.numel() for p in m.parameters()),'shape':list(y.shape),'blocks':len(tr)})
+          assert y.shape==(4,49,64) and len(tr)==4 and torch.isfinite(y).all()
+          t=Trainer(m,torch.device('cpu'),27101,1.0,4)
+          z=t.batch(x,False)
+          assert z['events']>4, z
+          assert all(torch.isfinite(p).all() for p in m.parameters())
+          print({'params':sum(p.numel() for p in m.parameters()),'shape':list(y.shape),'blocks':len(tr),'token_events':z['events']})
           PY
       - name: Resolve run controls
         id: ctl
         shell: bash
         run: |
           WALL='${{ github.event.inputs.wall_minutes }}'; WALL=${WALL:-55}
-          EPOCHS='${{ github.event.inputs.epochs }}'; EPOCHS=${EPOCHS:-30}
+          EPOCHS='${{ github.event.inputs.epochs }}'; EPOCHS=${EPOCHS:-12}
           LRS='${{ github.event.inputs.lr_scale }}'; LRS=${LRS:-1.0}
           QK='${{ github.event.inputs.qk_start_epoch }}'; QK=${QK:-2}
           echo "wall=$WALL" >> "$GITHUB_OUTPUT"
           echo "epochs=$EPOCHS" >> "$GITHUB_OUTPUT"
           echo "lrscale=$LRS" >> "$GITHUB_OUTPUT"
           echo "qk=$QK" >> "$GITHUB_OUTPUT"
-      - name: Run MSDL cloud gate
+      - name: Run E28 token-wise MSDL cloud gate
         working-directory: snn_transform_e27
         run: |
-          mkdir -p run_e27
+          mkdir -p run_e28
           python train.py \
-            --data ../data/mnist_e27.npz \
-            --out run_e27 \
+            --data ../data/mnist_e28.npz \
+            --out run_e28 \
             --epochs '${{ steps.ctl.outputs.epochs }}' \
             --batch 32 \
             --threads 2 \
@@ -86,23 +90,23 @@ jobs:
             --qk-groups 4 \
             --eval-every 2 \
             --wall-minutes '${{ steps.ctl.outputs.wall }}' \
-            --generate 100 | tee run_e27/console.log
+            --generate 100 | tee run_e28/console.log
       - name: Inspect final metrics
         if: always()
         working-directory: snn_transform_e27
         run: |
-          if [ -f run_e27/metrics.json ]; then cat run_e27/metrics.json; fi
-      - name: Upload E27 artifacts
+          if [ -f run_e28/metrics.json ]; then cat run_e28/metrics.json; fi
+      - name: Upload E28 artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SNN_TRANSFORM_E27_MSDL_CLOUD
+          name: SNN_TRANSFORM_E28_TOKENWISE_MSDL_CLOUD
           path: |
-            snn_transform_e27/run_e27/metrics.json
-            snn_transform_e27/run_e27/generation.png
-            snn_transform_e27/run_e27/generation.npz
-            snn_transform_e27/run_e27/latest.pt
-            snn_transform_e27/run_e27/codebook.npy
-            snn_transform_e27/run_e27/console.log
+            snn_transform_e27/run_e28/metrics.json
+            snn_transform_e27/run_e28/generation.png
+            snn_transform_e27/run_e28/generation.npz
+            snn_transform_e27/run_e28/latest.pt
+            snn_transform_e27/run_e28/codebook.npy
+            snn_transform_e27/run_e28/console.log
           if-no-files-found: warn
           retention-days: 30
