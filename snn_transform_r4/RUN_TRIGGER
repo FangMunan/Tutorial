@@ -1,0 +1,7 @@
+R4 single-module recovery gate
+source: E29 B0/Hg transfer solution
+target: blocks.3.f2.weight only
+damage: zero W2 weight
+learning: forward perturbative token-local MSDL
+backprop: disabled
+learned feedback network: none
