@@ -99,16 +99,38 @@ jobs:
           arm-none-eabi-nm spinnaker_backend/h3b_single_chip/build/gnu/snn_transform_h3b_worker.elf | grep ' c_main$'
           ls -lh spinnaker_backend/h3b_single_chip/snn_transform_h3b_worker.aplx
 
+      - name: Stage runnable H3B0 board bundle
+        run: |
+          rm -rf H3B0_BOARD_READY
+          mkdir -p H3B0_BOARD_READY/spinnaker_backend/h3b_single_chip
+          mkdir -p H3B0_BOARD_READY/spinnaker_backend/h2f_aplx
+          mkdir -p H3B0_BOARD_READY/run/H3B/packages
+          touch H3B0_BOARD_READY/spinnaker_backend/__init__.py
+          touch H3B0_BOARD_READY/spinnaker_backend/h3b_single_chip/__init__.py
+          touch H3B0_BOARD_READY/spinnaker_backend/h2f_aplx/__init__.py
+          cp spinnaker_backend/h3b_single_chip/snn_transform_h3b_worker.aplx H3B0_BOARD_READY/spinnaker_backend/h3b_single_chip/
+          cp spinnaker_backend/h3b_single_chip/run_h3b_single_chip.py H3B0_BOARD_READY/spinnaker_backend/h3b_single_chip/
+          cp spinnaker_backend/h3b_single_chip/h3b_contract.py H3B0_BOARD_READY/spinnaker_backend/h3b_single_chip/
+          cp spinnaker_backend/h3b_single_chip/H3B_STATUS.md H3B0_BOARD_READY/spinnaker_backend/h3b_single_chip/
+          cp spinnaker_backend/h2f_aplx/run_h2f_spalloc_board.py H3B0_BOARD_READY/spinnaker_backend/h2f_aplx/
+          cp spinnaker_backend/h2f_aplx/h2f_contract.py H3B0_BOARD_READY/spinnaker_backend/h2f_aplx/
+          cp spinnaker_backend/run/H3B/packages/H3B_P2_N64.npz H3B0_BOARD_READY/run/H3B/packages/
+          cat > H3B0_BOARD_READY/README_RUN.txt <<'TXT'
+          Run from this directory:
+          python spinnaker_backend/h3b_single_chip/run_h3b_single_chip.py \
+            --aplx spinnaker_backend/h3b_single_chip/snn_transform_h3b_worker.aplx \
+            --package run/H3B/packages/H3B_P2_N64.npz \
+            --source-config /home/jovyan/.spynnaker.cfg
+          TXT
+          PYTHONPATH=H3B0_BOARD_READY python - <<'PY'
+          import spinnaker_backend.h2f_aplx.run_h2f_spalloc_board
+          import spinnaker_backend.h3b_single_chip.h3b_contract
+          print('H3B0 staged bundle imports: PASS')
+          PY
+
       - name: Upload H3B0 board bundle
         uses: actions/upload-artifact@v4
         with:
           name: SNN_TRANSFORM_H3B0_SINGLE_CHIP_BUNDLE
-          path: |
-            spinnaker_backend/h3b_single_chip/snn_transform_h3b_worker.aplx
-            spinnaker_backend/h3b_single_chip/build/gnu/snn_transform_h3b_worker.elf
-            spinnaker_backend/h3b_single_chip/build/gnu/snn_transform_h3b_worker.txt
-            spinnaker_backend/h3b_single_chip/run_h3b_single_chip.py
-            spinnaker_backend/h2f_aplx/run_h2f_spalloc_board.py
-            spinnaker_backend/run/H3B/packages/H3B_P2_N64.npz
-            spinnaker_backend/h3b_single_chip/H3B_STATUS.md
+          path: H3B0_BOARD_READY
           retention-days: 30
