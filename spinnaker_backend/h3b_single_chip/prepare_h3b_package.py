@@ -2,7 +2,7 @@
 """Prepare an H3B single-chip distributed board package.
 
 The package is emitted only after a host-side sharded execution proves exact
-integer parity with the global frozen H2D reference.  This tests the *planned*
+integer parity with the global frozen H2D reference. This tests the planned
 worker reduction arithmetic independently of board multicast/routing.
 """
 from __future__ import annotations
@@ -40,6 +40,47 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def make_balanced_scaling_sequence(
+        workers: int, local_tokens: int, d: int, *, steps: int,
+        change_frac: float, seed: int):
+    """Generic Q20 trajectory with exactly the same changed-token count per
+    worker on every update step.
+
+    H3B1 is a weak-scaling hardware benchmark. Using a global random mask would
+    give different workers different Q/K/V work (e.g. 11 changed tokens on one
+    worker and 5 on another at 25%), which would confound the communication
+    scaling measurement. This generator keeps N_local and changed work per
+    worker fixed while total N grows with worker count.
+    """
+    if not (0.0 < change_frac <= 1.0):
+        raise ValueError("change_frac must be in (0,1]")
+    if workers < 1 or local_tokens < 1:
+        raise ValueError("workers and local_tokens must be positive")
+    total_tokens = workers * local_tokens
+    rng = np.random.default_rng(seed)
+    lim = 1 << (F_ACT - 2)  # +/-0.25 in Q20
+
+    def sample() -> np.ndarray:
+        return rng.integers(
+            -lim, lim + 1, size=(total_tokens, d), dtype=np.int32)
+
+    xs = [sample()]
+    masks = [np.ones(total_tokens, dtype=bool)]
+    nchange_local = max(1, int(round(local_tokens * change_frac)))
+    for _ in range(1, steps):
+        fresh = sample()
+        nxt = xs[-1].copy()
+        mask = np.zeros(total_tokens, dtype=bool)
+        for rank in range(workers):
+            local_idx = rng.permutation(local_tokens)[:nchange_local]
+            idx = rank * local_tokens + local_idx
+            nxt[idx] = fresh[idx]
+            mask[idx] = True
+        xs.append(nxt)
+        masks.append(mask)
+    return xs, masks
 
 
 def tail(rt: ActualHIRRuntime, x: np.ndarray, st: State) -> np.ndarray:
@@ -93,8 +134,8 @@ def distributed_host_gate(meta: dict, arrays: dict[str, np.ndarray],
                 b = a + local_tokens
                 pq, pk, v = shard_rt.features(x[a:b])
                 pqs.append(pq); pks.append(pk); vs.append(v)
-            # Crucially: concatenate before init_state so H is rounded once
-            # after the global token sum, exactly like H2D/H2F.
+            # Concatenate before init_state so H is rounded once after the
+            # global token sum, exactly like H2D/H2F.
             pq_all = np.concatenate(pqs, axis=0)
             pk_all = np.concatenate(pks, axis=0)
             v_all = np.concatenate(vs, axis=0)
@@ -109,13 +150,11 @@ def distributed_host_gate(meta: dict, arrays: dict[str, np.ndarray],
             g0 = local_states[0].g.copy()
             dH_total = np.zeros_like(H0, dtype=np.int64)
             dg_total = np.zeros_like(g0, dtype=np.int64)
-            worker_changes = []
             for rank in range(workers):
                 a = rank * local_tokens
                 b = a + local_tokens
                 local_mask = mask[a:b]
                 idx = np.flatnonzero(local_mask)
-                worker_changes.append(int(idx.size))
                 if idx.size == 0:
                     continue
                 pq_new, pk_new, v_new = shard_rt.features(x[a:b][idx])
@@ -165,7 +204,10 @@ def distributed_host_gate(meta: dict, arrays: dict[str, np.ndarray],
         rows.append({
             "step": step,
             "changed_tokens": int(mask.sum()),
-            "worker_changed_tokens": [int(mask[r*local_tokens:(r+1)*local_tokens].sum()) for r in range(workers)],
+            "worker_changed_tokens": [
+                int(mask[r*local_tokens:(r+1)*local_tokens].sum())
+                for r in range(workers)
+            ],
             "all_arrays_bit_exact": True,
         })
         last_y = y_ref
@@ -193,6 +235,8 @@ def main() -> None:
     ap.add_argument("--change-frac", type=float, default=0.25)
     ap.add_argument("--seed", type=int, default=37171)
     ap.add_argument("--pacing-us", type=int, default=1)
+    ap.add_argument("--balanced-local-changes", action="store_true")
+    ap.add_argument("--stage", default="H3B0_DISTRIBUTED_CORRECTNESS")
     args = ap.parse_args()
 
     if not (2 <= args.workers <= H3B_MAX_WORKERS):
@@ -205,9 +249,15 @@ def main() -> None:
     if (d, heads, features, ff) != (32, 2, 32, 64):
         raise ValueError("H3B-v1 fixes D32,H2,M32,FF64")
 
-    xs, masks = make_scaling_sequence(
-        total_tokens, d, steps=args.steps,
-        change_frac=args.change_frac, seed=args.seed)
+    if args.balanced_local_changes:
+        xs, masks = make_balanced_scaling_sequence(
+            args.workers, args.local_tokens, d, steps=args.steps,
+            change_frac=args.change_frac, seed=args.seed)
+    else:
+        xs, masks = make_scaling_sequence(
+            total_tokens, d, steps=args.steps,
+            change_frac=args.change_frac, seed=args.seed)
+
     gate, oracle = distributed_host_gate(
         meta, arrays, xs, masks,
         workers=args.workers, local_tokens=args.local_tokens)
@@ -228,9 +278,10 @@ def main() -> None:
         per_worker_changes.append(counts)
         expected_evals.append(sum(counts))
 
+    nchange_local = max(1, int(round(args.local_tokens * args.change_frac)))
     package_meta = {
         "format": "SNNTransform-H3B-single-chip-v1",
-        "stage": "H3B0_DISTRIBUTED_CORRECTNESS",
+        "stage": args.stage,
         "contract": "H1.1-functional-v9",
         "source_hir_sha256": sha256_file(args.hir),
         "source_checkpoint_sha256": meta["source_checkpoint_sha256"],
@@ -240,6 +291,8 @@ def main() -> None:
         "d": d, "heads": heads, "features": features, "ff": ff,
         "steps": args.steps, "change_frac": args.change_frac,
         "seed": args.seed, "pacing_us": args.pacing_us,
+        "balanced_local_changes": bool(args.balanced_local_changes),
+        "local_changes_per_update": nchange_local if args.balanced_local_changes else None,
         "worker_arena_bytes_requested": arena_bytes(args.local_tokens, d, heads, features, ff),
         "local_trajectory_words": local_trajectory_words(args.local_tokens, d, args.steps),
         "output_words_per_worker": output_word_count(args.local_tokens, d, heads, features),
