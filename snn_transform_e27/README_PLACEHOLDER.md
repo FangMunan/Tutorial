@@ -1,1 +1,0 @@
-Temporary branch bootstrap. Will be replaced by E27 preparation files.
