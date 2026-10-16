@@ -5,3 +5,4 @@ damage: zero W2 weight
 learning: forward perturbative token-local MSDL
 backprop: disabled
 learned feedback network: none
+rerun: static audit false-positive fixed
