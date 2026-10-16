@@ -1,0 +1,121 @@
+name: SNN Transform E29 B0-to-Hg Forward Equivalence
+
+on:
+  workflow_dispatch:
+    inputs:
+      b0_epochs:
+        description: 'B0 reference training epochs'
+        required: false
+        default: '30'
+      batch:
+        description: 'B0 training batch size'
+        required: false
+        default: '256'
+      features:
+        description: 'H/g RF widths'
+        required: false
+        default: '64,128,256,512'
+  push:
+    branches: [camp4]
+    paths:
+      - 'snn_transform_e29/RUN_TRIGGER'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  e29_forward_equivalence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: camp4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn matplotlib
+      - name: Static checks
+        working-directory: snn_transform_e29
+        run: |
+          python -m py_compile maskgit_b0_mnist012.py e29_forward_equivalence.py
+          python - <<'PY'
+          import torch
+          from maskgit_b0_mnist012 import Model,L,K,MASK
+          from e29_forward_equivalence import HgB0Model,transfer_b0
+          e=Model().eval(); h=HgB0Model(64,'gaussian').eval(); transfer_b0(e,h)
+          x=torch.randint(0,K,(2,L)); x[:,::3]=MASK; y=torch.tensor([0,1])
+          with torch.no_grad(): a=e(x,y); b=h(x,y)
+          assert a.shape==b.shape==(2,49,64)
+          assert sum(p.numel() for p in e.parameters())==sum(p.numel() for p in h.parameters())==824896
+          assert torch.isfinite(a).all() and torch.isfinite(b).all()
+          print({'shape':list(a.shape),'params':sum(p.numel() for p in h.parameters())})
+          PY
+      - name: Resolve controls
+        id: ctl
+        shell: bash
+        run: |
+          E='${{ github.event.inputs.b0_epochs }}'; E=${E:-30}
+          B='${{ github.event.inputs.batch }}'; B=${B:-256}
+          F='${{ github.event.inputs.features }}'; F=${F:-64,128,256,512}
+          echo "epochs=$E" >> "$GITHUB_OUTPUT"
+          echo "batch=$B" >> "$GITHUB_OUTPUT"
+          echo "features=$F" >> "$GITHUB_OUTPUT"
+      - name: Download MNIST
+        working-directory: snn_transform_e29
+        run: |
+          mkdir -p run_e29
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve('https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz','run_e29/mnist.npz')
+          PY
+      - name: Train gold B0 reference
+        working-directory: snn_transform_e29
+        run: |
+          mkdir -p run_e29/b0
+          python maskgit_b0_mnist012.py \
+            --data run_e29/mnist.npz \
+            --out run_e29/b0 \
+            --epochs '${{ steps.ctl.outputs.epochs }}' \
+            --batch '${{ steps.ctl.outputs.batch }}' \
+            --threads 2 \
+            --seed 7 \
+            --eval-every 5 \
+            --skip-final | tee run_e29/b0_train.log
+      - name: Run zero-training E29 transfer audit
+        working-directory: snn_transform_e29
+        run: |
+          python e29_forward_equivalence.py \
+            --data run_e29/mnist.npz \
+            --checkpoint run_e29/b0/best.pt \
+            --codebook run_e29/b0/codebook.npy \
+            --out run_e29/audit \
+            --features '${{ steps.ctl.outputs.features }}' \
+            --rf-kinds 'gaussian,p3norm' \
+            --threads 2 \
+            --audit-limit 512 \
+            --gen-per-class 20 | tee run_e29/e29_console.log
+      - name: Show final metrics
+        if: always()
+        working-directory: snn_transform_e29
+        run: |
+          if [ -f run_e29/audit/metrics.json ]; then cat run_e29/audit/metrics.json; fi
+      - name: Upload E29 artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_E29_FORWARD_EQUIVALENCE
+          path: |
+            snn_transform_e29/run_e29/b0/best.pt
+            snn_transform_e29/run_e29/b0/codebook.npy
+            snn_transform_e29/run_e29/b0/history.csv
+            snn_transform_e29/run_e29/b0_train.log
+            snn_transform_e29/run_e29/audit/metrics.json
+            snn_transform_e29/run_e29/audit/*.png
+            snn_transform_e29/run_e29/e29_console.log
+          if-no-files-found: warn
+          retention-days: 30
