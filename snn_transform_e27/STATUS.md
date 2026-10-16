@@ -1,0 +1,1 @@
+Preparation phase only. Training trigger intentionally absent.
