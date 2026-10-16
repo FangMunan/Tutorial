@@ -1,0 +1,77 @@
+name: SNN Transform E29 Audit Only Hotfix
+
+on:
+  push:
+    branches: [camp4]
+    paths:
+      - 'snn_transform_e29/RUN_TRIGGER_FIXED'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  e29_audit_only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: camp4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn matplotlib
+      - name: Recover B0 checkpoint from previous E29 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p snn_transform_e29/run_e29
+          gh run download 38964779791 \
+            --repo FangMunan/Tutorial \
+            --name SNN_TRANSFORM_E29_FORWARD_EQUIVALENCE \
+            --dir snn_transform_e29/run_e29
+          ls -R snn_transform_e29/run_e29
+      - name: Download MNIST
+        working-directory: snn_transform_e29
+        run: |
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve('https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz','run_e29/mnist.npz')
+          PY
+      - name: Run corrected zero-training E29 audit
+        working-directory: snn_transform_e29
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p run_e29/audit_fixed
+          python e29_forward_equivalence_fixed.py \
+            --data run_e29/mnist.npz \
+            --checkpoint run_e29/b0/best.pt \
+            --codebook run_e29/b0/codebook.npy \
+            --out run_e29/audit_fixed \
+            --features '64,128,256,512' \
+            --rf-kinds 'gaussian,p3norm' \
+            --threads 2 \
+            --audit-limit 512 \
+            --gen-per-class 20 | tee run_e29/e29_fixed_console.log
+      - name: Show metrics
+        if: always()
+        working-directory: snn_transform_e29
+        run: |
+          if [ -f run_e29/audit_fixed/metrics.json ]; then cat run_e29/audit_fixed/metrics.json; fi
+      - name: Upload corrected E29 artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_E29_FORWARD_EQUIVALENCE_FIXED
+          path: |
+            snn_transform_e29/run_e29/audit_fixed/metrics.json
+            snn_transform_e29/run_e29/audit_fixed/*.png
+            snn_transform_e29/run_e29/e29_fixed_console.log
+          if-no-files-found: warn
+          retention-days: 30
