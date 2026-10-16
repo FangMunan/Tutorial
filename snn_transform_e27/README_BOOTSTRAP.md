@@ -1,1 +1,0 @@
-This directory is being prepared for the E27 cloud MSDL training gate.
