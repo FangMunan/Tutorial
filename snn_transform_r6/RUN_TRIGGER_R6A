@@ -1,0 +1,4 @@
+R6A all-four-block joint recovery
+blocks: 0, 1, 2, 3
+credit: blocks0-2 image-level through downstream attention; block3 mixed local/image
+training: no backward, no torch optimizer, no learned feedback network
