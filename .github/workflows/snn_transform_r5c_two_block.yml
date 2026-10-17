@@ -55,9 +55,39 @@ jobs:
         run: |
           set -euo pipefail
           python -m py_compile r5c_two_block_recovery.py
-          if grep -nE '\.backward\(|torch\.optim' r5c_two_block_recovery.py; then
-            echo 'Forbidden backprop/torch.optim API found'; exit 1
-          fi
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          path = Path('r5c_two_block_recovery.py')
+          tree = ast.parse(path.read_text())
+          violations = []
+
+          def dotted(node):
+              parts = []
+              while isinstance(node, ast.Attribute):
+                  parts.append(node.attr)
+                  node = node.value
+              if isinstance(node, ast.Name):
+                  parts.append(node.id)
+              return '.'.join(reversed(parts))
+
+          for node in ast.walk(tree):
+              if isinstance(node, ast.Call):
+                  name = dotted(node.func)
+                  if name.endswith('.backward') or name == 'backward':
+                      violations.append((node.lineno, name))
+              if isinstance(node, ast.Attribute):
+                  name = dotted(node)
+                  if name == 'torch.optim' or name.startswith('torch.optim.'):
+                      violations.append((node.lineno, name))
+
+          if violations:
+              for line, name in violations:
+                  print(f'Forbidden API at line {line}: {name}')
+              raise SystemExit(1)
+          print('AST gradient-free audit passed')
+          PY
       - name: Run R5C two-block recovery
         working-directory: snn_transform_r5
         shell: bash
