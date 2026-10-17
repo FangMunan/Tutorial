@@ -1,0 +1,6 @@
+R5B full final H/g block recovery gate
+source: E29 transferred B0/Hg solution
+plastic: final block WQ WK WV WO W1 W2 and LN1/LN2 parameters
+learning: local antithetic forward perturbation + fast/slow synaptic states
+backprop: disabled
+learned feedback network: none
