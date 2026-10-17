@@ -1,0 +1,85 @@
+name: SNN Transform P4-I5 Gold Depth Capacity
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [camp4]
+    paths:
+      - 'snn_transform_e29/RUN_TRIGGER_P4_I5'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gold_depth_capacity:
+    strategy:
+      fail-fast: false
+      matrix:
+        layers: [1, 2, 4]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: camp4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn matplotlib
+      - name: Download MNIST
+        working-directory: snn_transform_e29
+        run: |
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'mnist.npz')
+          PY
+      - name: Run conventional BP gold capacity control
+        working-directory: snn_transform_e29
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=run_p4_i5_l${{ matrix.layers }}
+          rm -rf "$OUT"
+          python maskgit_b0_mnist012.py \
+            --data mnist.npz \
+            --out "$OUT" \
+            --epochs 40 \
+            --batch 256 \
+            --d 96 \
+            --layers ${{ matrix.layers }} \
+            --heads 8 \
+            --ff 192 \
+            --drop 0.05 \
+            --threads 2 \
+            --seed 6101 \
+            --steps 16 \
+            --temp 0.0 \
+            --lr 4e-4 \
+            --min-lr 2e-5 \
+            --warmup 500 \
+            --eval-every 5 | tee "${OUT}_console.log"
+      - name: Show final metrics
+        if: always()
+        working-directory: snn_transform_e29
+        run: |
+          OUT=run_p4_i5_l${{ matrix.layers }}
+          find "$OUT" -maxdepth 1 -type f -printf '%f\n' | sort || true
+          for P in "$OUT"/*.json; do
+            [ -f "$P" ] && { echo "===== $P ====="; cat "$P"; }
+          done
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_P4_I5_GOLD_L${{ matrix.layers }}
+          path: |
+            snn_transform_e29/run_p4_i5_l${{ matrix.layers }}/**
+            snn_transform_e29/run_p4_i5_l${{ matrix.layers }}_console.log
+          if-no-files-found: warn
+          retention-days: 30
