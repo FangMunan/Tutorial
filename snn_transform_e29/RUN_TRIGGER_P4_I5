@@ -1,0 +1,3 @@
+P4-I5 gold capacity diagnostic trigger
+Conventional BP reference only; not candidate learning.
+seed=6101 d=96 heads=8 ff=192 layers=1,2,4 epochs=40
