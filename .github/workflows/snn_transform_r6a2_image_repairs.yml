@@ -1,0 +1,137 @@
+name: SNN Transform R6A2 Image Repair Ablations
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [camp4]
+    paths:
+      - 'snn_transform_r6/RUN_TRIGGER_R6A2'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  r6a2_image_repairs:
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [cb, norm, both]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 210
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: camp4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn matplotlib
+      - name: Recover B0 checkpoint and codebook from E29
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p snn_transform_r6/run_r6a2_${{ matrix.variant }}
+          gh run download 38964779791 \
+            --repo FangMunan/Tutorial \
+            --name SNN_TRANSFORM_E29_FORWARD_EQUIVALENCE \
+            --dir snn_transform_r6/run_r6a2_${{ matrix.variant }}/e29_source
+          test -f snn_transform_r6/run_r6a2_${{ matrix.variant }}/e29_source/b0/best.pt
+          test -f snn_transform_r6/run_r6a2_${{ matrix.variant }}/e29_source/b0/codebook.npy
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import urllib.request
+          import os
+          variant='${{ matrix.variant }}'
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              f'run_r6a2_{variant}/mnist.npz')
+          PY
+      - name: Static gradient-free audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile r6a_four_block_recovery.py r6a2_image_repairs.py
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          violations=[]
+          for fn in ('r6a_four_block_recovery.py','r6a2_image_repairs.py'):
+              tree=ast.parse(Path(fn).read_text())
+              def dotted(node):
+                  parts=[]
+                  while isinstance(node, ast.Attribute):
+                      parts.append(node.attr); node=node.value
+                  if isinstance(node, ast.Name): parts.append(node.id)
+                  return '.'.join(reversed(parts))
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Call):
+                      name=dotted(node.func)
+                      if name.endswith('.backward') or name=='backward':
+                          violations.append((fn,node.lineno,name))
+                  if isinstance(node, ast.Attribute):
+                      name=dotted(node)
+                      if name=='torch.optim' or name.startswith('torch.optim.'):
+                          violations.append((fn,node.lineno,name))
+          if violations:
+              for row in violations: print('Forbidden API:',row)
+              raise SystemExit(1)
+          print('AST gradient-free audit passed')
+          PY
+      - name: Run R6A2 ${{ matrix.variant }}
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=run_r6a2_${{ matrix.variant }}/result
+          mkdir -p "$OUT"
+          python r6a2_image_repairs.py \
+            --variant ${{ matrix.variant }} \
+            --cb-beta 0.9999 \
+            --signal-rho 0.98 \
+            --data run_r6a2_${{ matrix.variant }}/mnist.npz \
+            --checkpoint run_r6a2_${{ matrix.variant }}/e29_source/b0/best.pt \
+            --codebook run_r6a2_${{ matrix.variant }}/e29_source/b0/codebook.npy \
+            --out "$OUT" \
+            --features 256 \
+            --rf-kind p3norm \
+            --rf-seed 29257 \
+            --epochs 6 \
+            --batch 128 \
+            --sigma 0.05 \
+            --lr-qkv 0.020 \
+            --lr-wo 0.040 \
+            --lr-f1 0.055 \
+            --lr-f2 0.080 \
+            --lr-ln 0.015 \
+            --scale-b0 0.35 \
+            --scale-b1 0.50 \
+            --scale-b2 0.70 \
+            --clip 0.60 \
+            --threads 2 \
+            --seed 5801 | tee run_r6a2_${{ matrix.variant }}/console.log
+      - name: Show metrics
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          P=run_r6a2_${{ matrix.variant }}/result/metrics.json
+          if [ -f "$P" ]; then cat "$P"; fi
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6A2_${{ matrix.variant }}
+          path: |
+            snn_transform_r6/run_r6a2_${{ matrix.variant }}/result/metrics.json
+            snn_transform_r6/run_r6a2_${{ matrix.variant }}/result/history.csv
+            snn_transform_r6/run_r6a2_${{ matrix.variant }}/result/recovery_checkpoint.pt
+            snn_transform_r6/run_r6a2_${{ matrix.variant }}/result/*.png
+            snn_transform_r6/run_r6a2_${{ matrix.variant }}/console.log
+          if-no-files-found: warn
+          retention-days: 30
