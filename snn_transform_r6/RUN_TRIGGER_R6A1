@@ -1,0 +1,2 @@
+R6A1 long-horizon four-block recovery
+Same code, seed, lesion, credit rule, and hyperparameters as R6A; only recovery horizon is extended from 5 to 8 epochs and workflow timeout to 240 minutes.
