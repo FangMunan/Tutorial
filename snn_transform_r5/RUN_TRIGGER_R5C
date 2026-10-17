@@ -1,0 +1,4 @@
+R5C two-block joint recovery
+blocks: 2 and 3
+credit: block2=image-level through downstream attention; block3=mixed local/image
+training: no backward, no torch.optim, no learned feedback network
