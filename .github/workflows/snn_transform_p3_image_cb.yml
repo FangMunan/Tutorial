@@ -1,0 +1,125 @@
+name: SNN Transform P3 image MSDL CB gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [camp4]
+    paths:
+      - 'snn_transform_p3_image/**'
+      - '.github/workflows/snn_transform_p3_image_cb.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  p3_image_msdl:
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [plain, cb_sqrt4]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: camp4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy numba torch scikit-learn matplotlib
+
+      - name: Download frozen E29 tokenizer/codebook
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p snn_transform_p3_image/run_${{ matrix.variant }}/e29_source
+          gh run download 38964779791 \
+            --repo FangMunan/Tutorial \
+            --name SNN_TRANSFORM_E29_FORWARD_EQUIVALENCE \
+            --dir snn_transform_p3_image/run_${{ matrix.variant }}/e29_source
+          test -f snn_transform_p3_image/run_${{ matrix.variant }}/e29_source/b0/codebook.npy
+
+      - name: Download MNIST
+        run: |
+          python - <<'PY'
+          import urllib.request
+          from pathlib import Path
+          for variant in ('${{ matrix.variant }}',):
+              p=Path('snn_transform_p3_image')/f'run_{variant}'/'mnist.npz'
+              urllib.request.urlretrieve('https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',p)
+          PY
+
+      - name: Static candidate gradient-free audit
+        run: |
+          set -euo pipefail
+          python -m py_compile snn_transform_p3_image/p3i_cb_exact_msdl.py
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          fn=Path('snn_transform_p3_image/p3i_cb_exact_msdl.py')
+          tree=ast.parse(fn.read_text())
+          bad=[]
+          def dotted(node):
+              parts=[]
+              while isinstance(node,ast.Attribute):
+                  parts.append(node.attr);node=node.value
+              if isinstance(node,ast.Name): parts.append(node.id)
+              return '.'.join(reversed(parts))
+          for node in ast.walk(tree):
+              if isinstance(node,ast.Call):
+                  name=dotted(node.func)
+                  if name.endswith('.backward') or name in ('backward','torch.autograd.grad'):
+                      bad.append((node.lineno,name))
+              if isinstance(node,ast.Attribute):
+                  name=dotted(node)
+                  if name=='torch.optim' or name.startswith('torch.optim.'):
+                      bad.append((node.lineno,name))
+          if bad:
+              raise SystemExit(f'Forbidden candidate gradient API: {bad}')
+          print('P3-image candidate gradient-free AST audit passed')
+          PY
+
+      - name: Run P3 image MSDL gate
+        run: |
+          set -euo pipefail
+          VAR='${{ matrix.variant }}'
+          BASE="snn_transform_p3_image/run_${VAR}"
+          OUT="$BASE/result"
+          mkdir -p "$OUT"
+          python snn_transform_p3_image/p3i_cb_exact_msdl.py \
+            --variant "$VAR" \
+            --data "$BASE/mnist.npz" \
+            --codebook "$BASE/e29_source/b0/codebook.npy" \
+            --out "$OUT" \
+            --D 96 --heads 8 --features 24 --ff 192 --R 7 \
+            --scaffold-contexts 2000 --scaffold-paths 2500 --scaffold-lr 0.6 \
+            --events 30000 --eval-images 128 --gen-per-class 12 \
+            --cb-beta 0.9999 --cb-cap 4.0 --report-every 5000 \
+            --seed 7311 | tee "$BASE/console.log"
+
+      - name: Show final metrics
+        if: always()
+        run: |
+          P="snn_transform_p3_image/run_${{ matrix.variant }}/result/metrics.json"
+          if [ -f "$P" ]; then cat "$P"; fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: SNN_TRANSFORM_P3_IMAGE_${{ matrix.variant }}
+          path: |
+            snn_transform_p3_image/run_${{ matrix.variant }}/result/metrics.json
+            snn_transform_p3_image/run_${{ matrix.variant }}/result/history.csv
+            snn_transform_p3_image/run_${{ matrix.variant }}/result/final_state.npz
+            snn_transform_p3_image/run_${{ matrix.variant }}/result/generated_tokens_*.csv
+            snn_transform_p3_image/run_${{ matrix.variant }}/result/*.png
+            snn_transform_p3_image/run_${{ matrix.variant }}/console.log
+          if-no-files-found: warn
+          retention-days: 30
