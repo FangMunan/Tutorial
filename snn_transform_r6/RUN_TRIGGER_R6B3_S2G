@@ -1,0 +1,2 @@
+Trigger R6B.3 S2G minimal non-MaskGIT scaffold generality test.
+Causal next-token only; no MaskGIT training or generation.
