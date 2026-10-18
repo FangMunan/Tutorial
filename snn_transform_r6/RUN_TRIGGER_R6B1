@@ -1,0 +1,3 @@
+R6B1 sensory tokenizer gate
+2026-10-18
+compare: historical KMeans vs ANN-VQ vs 28x28 sensory-LIF SNN-VQ
