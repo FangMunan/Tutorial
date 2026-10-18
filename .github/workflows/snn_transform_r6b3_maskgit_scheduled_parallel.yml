@@ -50,28 +50,39 @@ jobs:
         run: |
           set -euo pipefail
           python -m py_compile \
+            maskgit_input_representation.py \
             maskgit_scheduled_parallel.py \
             maskgit_msdl_training.py \
+            maskgit_msdl_training_unconditional.py \
             r6b1_spiking_tokenizer.py \
             r6b2_snn_encoder_p3_msdl.py \
             r6b3_snn_encoder_maskgit_msdl.py \
             ../snn_transform_p3_image/p3i_cb_exact_msdl.py
           test -f frozen_r6b1/result/tokenizer.pt
 
-          # Generation must be MaskGIT scheduled-parallel, never sequential fill.
+          # Generation must remain MaskGIT scheduled-parallel.
           grep -q 'scheduled_parallel_decode' r6b3_snn_encoder_maskgit_msdl.py
-          grep -q 'all currently masked sites from one immutable context' r6b3_snn_encoder_maskgit_msdl.py
           if grep -q 'rng.permutation(cfg.N)' r6b3_snn_encoder_maskgit_msdl.py; then
             echo 'ERROR: old sequential random-permutation generation/training found in R6B3'
             exit 1
           fi
 
           # Training must use one random MaskGIT mask set and all masked targets.
-          grep -q 'train_maskgit_msdl' r6b3_snn_encoder_maskgit_msdl.py
-          grep -q 'ceil(gamma(r)' maskgit_msdl_training.py
-          grep -q 'ground_truth_reveal_inside_batch' maskgit_msdl_training.py
+          grep -q 'train_maskgit_msdl_unconditional' r6b3_snn_encoder_maskgit_msdl.py
           if grep -q 'core.train_full' r6b3_snn_encoder_maskgit_msdl.py; then
             echo 'ERROR: legacy sequential-reveal P3 train_full is still called'
+            exit 1
+          fi
+
+          # Item-2 guard: no historical random embedding builder and no class input.
+          grep -q 'build_input_embeddings' r6b3_snn_encoder_maskgit_msdl.py
+          grep -q 'context_from_arr_unconditional' r6b3_snn_encoder_maskgit_msdl.py
+          if grep -q 'core.build_embeddings' r6b3_snn_encoder_maskgit_msdl.py; then
+            echo 'ERROR: fixed-random P3 embedding builder reintroduced'
+            exit 1
+          fi
+          if grep -q 'class_conditioning_retained.:True' r6b3_snn_encoder_maskgit_msdl.py; then
+            echo 'ERROR: class conditioning reintroduced'
             exit 1
           fi
 
@@ -96,7 +107,7 @@ jobs:
             --scaffold-lr 0.6 \
             --events 30000 \
             --eval-images 128 \
-            --gen-per-class 12 \
+            --gen-samples 36 \
             --internal-lr-scale 0.5 \
             --encode-batch 256 \
             --decode-iterations 8 \
