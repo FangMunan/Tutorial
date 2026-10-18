@@ -1,81 +1,72 @@
-# R6B.3 pre-run audit — MaskGIT-aligned training and decoding
+# R6B.3 pre-run audit — MaskGIT-aligned, label-free route
 
 Status: **CODE PREPARED / NOT RUN**.
 
-## Scope
+## Current scope
 
-R6B.2 is retained only as historical provenance. Its old generation result is not a valid MaskGIT benchmark because it used random one-token-at-a-time permanent filling.
+R6B.3 now changes four historical interface assumptions before any new training is launched:
 
-R6B.3 keeps the frozen R6B.1 SNN-VQ tokenizer and exact P3 local dynamical learning machinery, but now aligns **both** the masked-token training task and generation controller with MaskGIT semantics. No KMeans route is re-run.
+1. MaskGIT-style simultaneous random masking for training.
+2. MaskGIT scheduled-parallel confidence/remask decoding for generation.
+3. No class conditioning: 0/1/2 labels do not enter the neural predictor, MSDL learning, or generation.
+4. No fixed-random token/position/class embedding table.
 
-## A. Training masking: one-to-one check against MaskGIT MVTM
+The frozen R6B.1 SNN-VQ tokenizer and exact P3 local dynamical core remain the neural substrate.
 
-MaskGIT paper rule: sample `r ~ Uniform[0,1)`, compute `gamma(r)`, uniformly mask `ceil(gamma(r) * N)` tokens, and predict every masked token from the same corrupted token sequence.
+## One-to-one protocol audit
 
-| MaskGIT training operation | R6B.3 implementation | Audit |
-|---|---|---|
-| sample ratio `r` uniformly | `rng.random()` | PASS by inspection |
-| cosine schedule | `gamma(r)=cos(pi*r/2)` | PASS by inspection |
-| mask count | `ceil(gamma(r)*N)` | PASS by inspection |
-| choose masked locations uniformly without replacement | `rng.choice(..., replace=False)` | PASS by inspection |
-| replace all selected locations by MASK before prediction | one `arr` is constructed once per mask context | PASS by inspection |
-| predict/learn all masked positions | every `masked_position` contributes once | PASS by inspection |
-| same corrupted context for all masked targets | P3 resident state is rebuilt once from that single `arr` | PASS by inspection |
-| no progressive ground-truth reveal | no target token is written back into `arr` | PASS by inspection |
-| no forward-weight change before all masked targets contribute | all receiver forward quantities are cached first; local contributions accumulate; one `apply_update()` follows the complete masked set | PASS by inspection |
+| Operation | Standard MaskGIT principle | Current R6B.3 | Status |
+|---|---|---|---|
+| visual tokenizer | learned VQ tokenizer | frozen sensory-SNN VQ tokenizer | deliberate SNN replacement |
+| visual-token representation | learned token embedding | geometry-preserving embedding of frozen SNN-VQ codebook | no fixed-random table |
+| position representation | learned position embedding | deterministic 2-D sinusoidal 7x7 representation | no fixed-random table |
+| class conditioning | optional class token in class-conditional model | absent | deliberate label-free choice |
+| training mask ratio | random ratio with cosine schedule | same task-level rule | aligned |
+| positions masked together | multiple random positions | multiple random positions | aligned |
+| context during masked-target predictions | fixed corrupted context | fixed corrupted context | aligned |
+| ground-truth reveal within masked batch | no | no | aligned |
+| predictor learning | BP/CE | local persistent E/M MSDL | deliberate learning-rule replacement |
+| generation start | all MASK | all 49 MASK | aligned |
+| generation proposal | all current MASK sites | all current MASK sites | aligned |
+| sampled-token confidence | yes | yes | aligned |
+| cosine confidence remask | yes | yes | aligned |
+| iterative refinement | yes | 8 rounds by default | aligned |
 
-The historical `core.train_full(...)` sequential-reveal routine is **not called** by R6B.3.
+## Input representation correction
 
-### MSDL-specific implementation boundary
+Historical P3 input was
 
-MaskGIT uses backpropagation on the sum/mean of masked-token losses. R6B.3 does not imitate BP. It keeps the accepted P3 local rule: persistent E/M populations and local `M E^T` contributions. The forward context, forward weights and cached predictions are fixed across the entire masked target set. The persistent E/M populations then advance through those masked-target contributions in randomized order, and the accumulated local update is applied once after the complete set.
+`x_i = random_token[z_i] + random_position[i] + random_class[y]`.
 
-Therefore task semantics are MaskGIT-style; the physical/local learning mechanism remains intentionally different.
+Current R6B.3 is
 
-The startup WR scaffold has no direct counterpart in standard MaskGIT. Its **input contexts** are now also generated with the same MaskGIT random multi-mask rule and without progressive reveal. The historical MSDL scaffold optimizer still samples those conditional target rows as its own initialization procedure.
+`x_i = VQ_geometry[z_i] + sinusoidal_2D_position[i]`.
 
-## B. Generation: one-to-one check against public Google MaskGIT inference
+Token embeddings are obtained by centering the frozen SNN-VQ codebook and applying a deterministic isometric DCT lift from the VQ latent dimension to P3 dimension D. Pairwise VQ-code distances are preserved up to one global scale. MASK is the centered VQ origin (zero vector).
 
-Reference files:
-- `google-research/maskgit/maskgit/libml/parallel_decode.py`
-- `google-research/maskgit/maskgit/libml/mask_schedule.py`
+Position embeddings are deterministic 2-D sinusoidal coordinates for the 7x7 grid. There is no class table.
 
-| MaskGIT operation | R6B.3 implementation | Audit |
-|---|---|---|
-| start from all MASK image tokens | `initial=np.full(cfg.N, core.MASK)` | PASS by inspection |
-| predict every currently masked location from one context | one `xn,xraw`; every masked receiver queried before any proposal write | PASS by inspection |
-| categorical sample at every masked site | `_sample_rows` | PASS by inspection |
-| keep committed tokens unchanged | proposals only write current unknown positions | PASS by inspection |
-| confidence = probability of sampled token | `selected_prob=p[row,sampled]` | PASS by inspection |
-| cosine schedule | `cos(pi*ratio/2)` | PASS by inspection |
-| public Google mask-length rule | floor from initial unknown count + clamp | PASS by inspection |
-| annealed random-top-k | `log(prob)+temperature*gumbel` | PASS by inspection |
-| re-mask lowest-confidence proposals | ascending score, first `mask_len` | PASS by inspection |
-| iterative refinement | default `T=8` | PASS by inspection |
-| return final full proposal | stored before the final re-mask state | PASS by inspection |
+This removes the arbitrary fixed-random bottleneck without adding a new embedding-specific credit-assignment mechanism. Making token/position tables plastic would require a new local mismatch pathway to all visible inputs and is therefore deferred as a separate intervention rather than silently added to P3/MSDL.
 
-For N=49 and T=8, the controller asserts post-round MASK counts:
+## Label boundary
 
-`[48, 45, 40, 34, 27, 18, 9, 1]`
+MNIST labels remain available only for:
 
-The returned image is the fully sampled proposal of the final round, matching the public Google implementation's stored output convention.
+- selecting the historical 0/1/2 evaluation subset;
+- an external post-hoc classifier used to describe generated samples.
 
-## C. Hardware boundary
+They are not passed to tokenizer encoding, token/position context construction, P3/MSDL learning, or MaskGIT generation. Consequently class-conditioned `condition_match` is no longer a valid generation metric and has been removed from the R6B.3 gate.
 
-Within one generation round, the cloud reference loops over receiver queries in Python, but every receiver sees one immutable context. Thus the semantics are parallel while the reference execution is serial. On SpiNNaker the receiver queries can be dispatched concurrently. The 49-value cosine/ranking/re-mask controller remains ordinary control-core logic; it is not forced into an SNN.
+## Startup scaffold status
 
-During training, the same principle is used: one resident corrupted context serves all masked receiver targets. Forward quantities are cached before the local update boundary. The persistent E/M learning states are then advanced locally; this is the P3/MSDL implementation rather than a claim of BP equivalence.
+The WR startup scaffold is **still present** in current R6B.3. It now sees label-free MaskGIT-style corrupted contexts, but it remains an extra bootstrapping stage not present in standard MaskGIT.
 
-## D. Guardrails
+Its necessity is not assumed. A separate staged scaffold-removal plan is stored in `R6B3_SCAFFOLD_REMOVAL_PLAN.md`. The core algebra suggests native bootstrapping may be possible because the direct WR MSDL update can be nonzero even at `WR=0`; after WR moves, the reciprocal BR pathway can activate deeper plasticity. This must be checked causally before deleting the scaffold.
 
-- Training-mask self-test verifies cosine/ceil/uniform-without-replacement masking.
-- Workflow rejects any call to legacy `core.train_full`.
-- Workflow rejects the old `rng.permutation(cfg.N)` sequential reveal/fill pattern in R6B.3.
-- Generation controller self-test checks all-MASK start, all-current-MASK proposal, confidence re-mask and exact N=49/T=8 schedule.
-- Per-image generation traces and audits are saved.
-- Online training audit records mask-batch counts and confirms no in-batch ground-truth reveal.
-- Workflow remains `workflow_dispatch` only.
+## SpiNNaker boundary
 
-## Boundary
+The expensive predictor remains SNN/P3. The MaskGIT scheduler remains a small conventional controller. The new token representation is a fixed lookup derived from the frozen codebook and the position representation is deterministic, so this correction does not introduce a new online optimizer or host-side training requirement.
 
-This is a **source-level pre-run audit**, not an experimental result. No R6B.3 training or generation run has been launched.
+## Execution status
+
+No R6B.3 training/generation workflow has been launched after these changes. The workflow remains `workflow_dispatch` only.
