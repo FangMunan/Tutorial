@@ -1,0 +1,3 @@
+R6B1 tokenizer tuning sweep
+2026-10-18
+alpha 0.25/0.50/0.75 at T8 plus T16 control
