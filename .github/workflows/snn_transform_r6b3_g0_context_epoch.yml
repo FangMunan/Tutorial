@@ -15,6 +15,9 @@ on:
         description: Unconditional samples for each 8/16-round decode
         required: true
         default: '36'
+  push:
+    branches:
+      - r6b3-g0-training-v2
 
 permissions:
   contents: read
@@ -27,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: r6b3-g0-training
+          ref: r6b3-g0-training-v2
 
       - uses: actions/setup-python@v5
         with:
@@ -77,9 +80,7 @@ jobs:
           grep -q 'context_from_arr_unconditional' r6b3_context_epoch_training.py
           grep -q 'checkpoint_roundtrip_audit' r6b3_context_epoch_training.py
           grep -q 'for iters in (8,16)' r6b3_context_epoch_training.py
-          if grep -q 'p1g' r6b3_context_epoch_training.py | grep -v 'No P1-G'; then
-            true
-          fi
+          grep -q 'p1g_reintroduced.:False' r6b3_context_epoch_training.py
 
       - name: Run G0 context-epoch training
         working-directory: snn_transform_r6
@@ -92,12 +93,12 @@ jobs:
             --data run_r6b3_g0/mnist.npz \
             --tokenizer frozen_r6b1/result/tokenizer.pt \
             --out "$OUT" \
-            --fractional-epoch "${{ inputs.fractional_epoch }}" \
+            --fractional-epoch "${{ inputs.fractional_epoch || '0.25' }}" \
             --D 96 --heads 8 --features 24 --ff 192 --R 7 \
             --scaffold-contexts 2000 --scaffold-paths 2500 --scaffold-lr 0.6 \
             --internal-lr-scale 0.5 \
-            --eval-images "${{ inputs.eval_images }}" \
-            --gen-samples "${{ inputs.gen_samples }}" \
+            --eval-images "${{ inputs.eval_images || '128' }}" \
+            --gen-samples "${{ inputs.gen_samples || '36' }}" \
             --choice-temperature 4.5 \
             --encode-batch 256 \
             --report-every-contexts 500 \
