@@ -2,10 +2,6 @@ name: SNN Transform R6B3 S2G Next-Token Scaffold Generality
 
 on:
   workflow_dispatch:
-  push:
-    branches: [camp4]
-    paths:
-      - 'snn_transform_r6/RUN_TRIGGER_R6B3_S2G'
 
 permissions:
   contents: read
