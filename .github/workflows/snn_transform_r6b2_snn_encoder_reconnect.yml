@@ -1,0 +1,106 @@
+name: SNN Transform R6B2 SNN Encoder Reconnect
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  r6b2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: camp4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_r6b2
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_r6b2/mnist.npz')
+          PY
+
+      - name: Static audit
+        working-directory: snn_transform_r6
+        run: |
+          set -euo pipefail
+          python -m py_compile r6b1_spiking_tokenizer.py r6b2_snn_encoder_p3_msdl.py
+          python -m py_compile ../snn_transform_p3_image/p3i_cb_exact_msdl.py
+          test -f frozen_r6b1/result/tokenizer.pt
+          echo 'Frozen tokenizer:'
+          ls -lh frozen_r6b1/result/tokenizer.pt
+
+      - name: Run R6B2 SNN encoder reconnect test
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=run_r6b2/result
+          mkdir -p "$OUT"
+          python r6b2_snn_encoder_p3_msdl.py \
+            --data run_r6b2/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --out "$OUT" \
+            --D 96 \
+            --heads 8 \
+            --features 24 \
+            --ff 192 \
+            --R 7 \
+            --scaffold-contexts 2000 \
+            --scaffold-paths 2500 \
+            --scaffold-lr 0.6 \
+            --events 30000 \
+            --eval-images 128 \
+            --gen-per-class 12 \
+            --internal-lr-scale 0.5 \
+            --encode-batch 256 \
+            --seed 7311 \
+            --report-every 5000 \
+            --threads 4 | tee run_r6b2/console.log
+
+      - name: Show result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          test -f run_r6b2/result/metrics.json && cat run_r6b2/result/metrics.json || true
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B2_SNN_ENCODER_RECONNECT
+          path: |
+            snn_transform_r6/run_r6b2/result/metrics.json
+            snn_transform_r6/run_r6b2/result/generation_scaffold.png
+            snn_transform_r6/run_r6b2/result/generation_final.png
+            snn_transform_r6/run_r6b2/result/final_state.npz
+            snn_transform_r6/run_r6b2/result/generated_tokens_scaffold.csv
+            snn_transform_r6/run_r6b2/result/generated_tokens_final.csv
+            snn_transform_r6/run_r6b2/result/history.csv
+            snn_transform_r6/run_r6b2/console.log
+          if-no-files-found: warn
+          retention-days: 30
