@@ -2,9 +2,6 @@ name: SNN Transform R6B3 G2 2.0 epoch continuation
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - r6b3-g0-training-v2
 
 permissions:
   contents: read
