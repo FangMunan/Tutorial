@@ -1,4 +1,4 @@
-name: SNN Transform R6B3 MaskGIT Scheduled Parallel
+name: SNN Transform R6B3 MaskGIT Train and Decode
 
 on:
   workflow_dispatch:
@@ -51,19 +51,31 @@ jobs:
           set -euo pipefail
           python -m py_compile \
             maskgit_scheduled_parallel.py \
+            maskgit_msdl_training.py \
             r6b1_spiking_tokenizer.py \
             r6b2_snn_encoder_p3_msdl.py \
             r6b3_snn_encoder_maskgit_msdl.py \
             ../snn_transform_p3_image/p3i_cb_exact_msdl.py
           test -f frozen_r6b1/result/tokenizer.pt
+
+          # Generation must be MaskGIT scheduled-parallel, never sequential fill.
           grep -q 'scheduled_parallel_decode' r6b3_snn_encoder_maskgit_msdl.py
           grep -q 'all currently masked sites from one immutable context' r6b3_snn_encoder_maskgit_msdl.py
           if grep -q 'rng.permutation(cfg.N)' r6b3_snn_encoder_maskgit_msdl.py; then
-            echo 'ERROR: sequential random-permutation generation found in R6B3'
+            echo 'ERROR: old sequential random-permutation generation/training found in R6B3'
             exit 1
           fi
 
-      - name: Run R6B3 corrected MaskGIT generation test
+          # Training must use one random MaskGIT mask set and all masked targets.
+          grep -q 'train_maskgit_msdl' r6b3_snn_encoder_maskgit_msdl.py
+          grep -q 'ceil(gamma(r)' maskgit_msdl_training.py
+          grep -q 'ground_truth_reveal_inside_batch' maskgit_msdl_training.py
+          if grep -q 'core.train_full' r6b3_snn_encoder_maskgit_msdl.py; then
+            echo 'ERROR: legacy sequential-reveal P3 train_full is still called'
+            exit 1
+          fi
+
+      - name: Run R6B3 MaskGIT-aligned training and generation
         working-directory: snn_transform_r6
         shell: bash
         run: |
@@ -103,7 +115,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SNN_TRANSFORM_R6B3_MASKGIT_SCHEDULED_PARALLEL
+          name: SNN_TRANSFORM_R6B3_MASKGIT_TRAIN_AND_DECODE
           path: |
             snn_transform_r6/run_r6b3/result/metrics.json
             snn_transform_r6/run_r6b3/result/generation_scaffold.png
@@ -112,6 +124,7 @@ jobs:
             snn_transform_r6/run_r6b3/result/generated_tokens_scaffold.csv
             snn_transform_r6/run_r6b3/result/generated_tokens_final.csv
             snn_transform_r6/run_r6b3/result/history.csv
+            snn_transform_r6/run_r6b3/result/maskgit_training_audit.json
             snn_transform_r6/run_r6b3/result/maskgit_trace_scaffold.json
             snn_transform_r6/run_r6b3/result/maskgit_trace_final.json
             snn_transform_r6/run_r6b3/result/maskgit_audit_scaffold.json
