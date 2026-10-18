@@ -1,0 +1,110 @@
+name: SNN Transform R6B3 S1 Bootstrap Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [camp4]
+    paths:
+      - 'snn_transform_r6/RUN_TRIGGER_R6B3_S1'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  s1-bootstrap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: camp4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_r6b3_s1
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_r6b3_s1/mnist.npz')
+          PY
+
+      - name: Static S1 guardrails
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            r6b3_s1_bootstrap_smoke.py \
+            maskgit_input_representation.py \
+            maskgit_msdl_training.py \
+            r6b2_snn_encoder_p3_msdl.py \
+            ../snn_transform_p3_image/p3i_cb_exact_msdl.py
+          grep -q "no_startup_scaffold" r6b3_s1_bootstrap_smoke.py
+          if grep -q "train_readout_msdl" r6b3_s1_bootstrap_smoke.py; then
+            echo 'ERROR: S1 must not use startup scaffold'
+            exit 1
+          fi
+          if grep -q "generation_tokens\|scheduled_parallel_decode" r6b3_s1_bootstrap_smoke.py; then
+            echo 'ERROR: S1 must not run generation'
+            exit 1
+          fi
+          test -f frozen_r6b1/result/tokenizer.pt
+
+      - name: Run eight complete no-scaffold MaskGIT batches
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=run_r6b3_s1/result
+          mkdir -p "$OUT"
+          python r6b3_s1_bootstrap_smoke.py \
+            --data run_r6b3_s1/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --out "$OUT" \
+            --batches 8 \
+            --D 96 \
+            --heads 8 \
+            --features 24 \
+            --ff 192 \
+            --R 7 \
+            --internal-lr-scale 0.5 \
+            --encode-batch 256 \
+            --seed 7311 \
+            --threads 4 | tee run_r6b3_s1/console.log
+
+      - name: Show S1 result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          test -f run_r6b3_s1/result/s1_bootstrap.json && cat run_r6b3_s1/result/s1_bootstrap.json || true
+
+      - name: Upload S1 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_S1_BOOTSTRAP_SMOKE
+          path: |
+            snn_transform_r6/run_r6b3_s1/result/s1_bootstrap.json
+            snn_transform_r6/run_r6b3_s1/console.log
+          if-no-files-found: warn
+          retention-days: 30
