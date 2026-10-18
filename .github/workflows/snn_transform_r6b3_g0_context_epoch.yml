@@ -1,0 +1,76 @@
+name: SNN Transform R6B3 G0 context epoch
+
+on:
+  workflow_dispatch:
+    inputs:
+      fractional_epoch:
+        description: Fraction of one context epoch to run
+        required: true
+        default: '0.25'
+      eval_images:
+        description: Number of test images per fixed mask-ratio evaluation
+        required: true
+        default: '128'
+      gen_samples:
+        description: Number of unconditional samples for each 8/16-round decode
+        required: true
+        default: '36'
+
+jobs:
+  g0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy numba torch scikit-learn matplotlib scikit-image
+
+      - name: Locate frozen inputs
+        id: inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          DATA=$(find . -type f -name 'mnist.npz' | head -n 1 || true)
+          TOK=$(find . -type f \( -name '*a075*t8*.pt' -o -name '*alpha*075*t8*.pt' -o -name '*r6b1*.pt' \) | head -n 1 || true)
+          if [ -z "$DATA" ]; then
+            echo 'mnist.npz not found in checkout'; exit 2
+          fi
+          if [ -z "$TOK" ]; then
+            echo 'Frozen R6B1 alpha=.75 T=8 tokenizer checkpoint not found in checkout'; exit 3
+          fi
+          echo "data=$DATA" >> "$GITHUB_OUTPUT"
+          echo "tokenizer=$TOK" >> "$GITHUB_OUTPUT"
+          echo "DATA=$DATA"
+          echo "TOKENIZER=$TOK"
+
+      - name: Syntax check
+        run: |
+          python -m py_compile snn_transform_r6/r6b3_context_epoch_training.py
+
+      - name: Run G0
+        run: |
+          python snn_transform_r6/r6b3_context_epoch_training.py \
+            --data "${{ steps.inputs.outputs.data }}" \
+            --tokenizer "${{ steps.inputs.outputs.tokenizer }}" \
+            --out R6B3_G0_CONTEXT_EPOCH \
+            --fractional-epoch "${{ inputs.fractional_epoch }}" \
+            --eval-images "${{ inputs.eval_images }}" \
+            --gen-samples "${{ inputs.gen_samples }}" \
+            --seed 7311 \
+            --threads 4
+
+      - name: Upload G0 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G0_CONTEXT_EPOCH
+          path: R6B3_G0_CONTEXT_EPOCH
+          if-no-files-found: warn
