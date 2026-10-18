@@ -1,0 +1,117 @@
+name: SNN Transform R6B3 decoder operating-point audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - r6b3-g0-training-v2
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  decoder-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: r6b3-g0-training-v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+
+      - name: Download frozen two-epoch checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
+          path: snn_transform_r6/prior_g2
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39170815102
+
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_r6b3_decoder_audit
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_r6b3_decoder_audit/mnist.npz')
+          PY
+
+      - name: Static inference-only audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile r6b3_decoder_operating_point_audit.py
+          test -f frozen_r6b1/result/tokenizer.pt
+          test -f prior_g2/result/checkpoint_2p0000epoch.pkl
+          grep -q "learning_performed.*False" r6b3_decoder_operating_point_audit.py
+          grep -q "system_state_unchanged_audit" r6b3_decoder_operating_point_audit.py
+          grep -q "4,6,8,10,12,16" r6b3_decoder_operating_point_audit.py
+          grep -q "3.0,4.5,6.0" r6b3_decoder_operating_point_audit.py
+
+      - name: Sweep decoder operating points from frozen 2-epoch checkpoint
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=run_r6b3_decoder_audit/result
+          mkdir -p "$OUT"
+          python r6b3_decoder_operating_point_audit.py \
+            --data run_r6b3_decoder_audit/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
+            --out "$OUT" \
+            --rounds 4,6,8,10,12,16 \
+            --temperatures 3.0,4.5,6.0 \
+            --samples 128 \
+            --grid-samples 36 \
+            --encode-batch 256 \
+            --seed 7311 --threads 4 | tee run_r6b3_decoder_audit/console.log
+
+      - name: Show concise decoder audit result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          test -f run_r6b3_decoder_audit/result/DECODER_AUDIT_RESULTS.json && python - <<'PY'
+          import json
+          p='run_r6b3_decoder_audit/result/DECODER_AUDIT_RESULTS.json'
+          d=json.load(open(p))
+          print(json.dumps({
+            'real_token_reference':d['real_token_reference'],
+            'best_by_token_js':d['best_by_token_js'],
+            'best_by_class_entropy':d['best_by_class_entropy'],
+            'ranking_by_token_js_to_real':d['ranking_by_token_js_to_real'],
+            'default_r8_t4.5':d['settings']['r8_t4.5']['summary'],
+            'system_state_unchanged_audit':d['system_state_unchanged_audit'],
+          },indent=2))
+          PY
+
+      - name: Upload decoder audit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_TWO_EPOCH_DECODER_AUDIT
+          path: |
+            snn_transform_r6/run_r6b3_decoder_audit/result/
+            snn_transform_r6/run_r6b3_decoder_audit/console.log
+          if-no-files-found: warn
+          retention-days: 30
