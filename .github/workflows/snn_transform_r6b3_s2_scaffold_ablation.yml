@@ -1,0 +1,125 @@
+name: SNN Transform R6B3 S2 Scaffold Ablation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  s2-ablation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: camp4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_r6b3_s2
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_r6b3_s2/mnist.npz')
+          PY
+
+      - name: Static S2 guardrails
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            r6b3_s2_scaffold_ablation.py \
+            r6b3_snn_encoder_maskgit_msdl.py \
+            maskgit_input_representation.py \
+            maskgit_msdl_training.py \
+            maskgit_msdl_training_unconditional.py \
+            maskgit_scheduled_parallel.py \
+            r6b2_snn_encoder_p3_msdl.py \
+            ../snn_transform_p3_image/p3i_cb_exact_msdl.py
+          test -f frozen_r6b1/result/tokenizer.pt
+          grep -q "build_shared_schedule" r6b3_s2_scaffold_ablation.py
+          grep -q "same_schedule_for_both_branches" r6b3_s2_scaffold_ablation.py
+          grep -q "native_model=clone_model(base_model)" r6b3_s2_scaffold_ablation.py
+          grep -q "build_maskgit_scaffold_contexts_unconditional" r6b3_s2_scaffold_ablation.py
+          if grep -q "context_from_arr(arr,.*y" r6b3_s2_scaffold_ablation.py; then
+            echo 'ERROR: label-conditioned context detected in S2'
+            exit 1
+          fi
+
+      - name: Run paired S2 scaffold ablation
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=run_r6b3_s2/result
+          mkdir -p "$OUT"
+          python r6b3_s2_scaffold_ablation.py \
+            --data run_r6b3_s2/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --out "$OUT" \
+            --D 96 \
+            --heads 8 \
+            --features 24 \
+            --ff 192 \
+            --R 7 \
+            --scaffold-contexts 2000 \
+            --scaffold-paths 2500 \
+            --scaffold-lr 0.6 \
+            --events 30000 \
+            --eval-images 128 \
+            --gen-samples 36 \
+            --internal-lr-scale 0.5 \
+            --encode-batch 256 \
+            --decode-iterations 8 \
+            --choice-temperature 4.5 \
+            --seed 7311 \
+            --report-every 5000 \
+            --threads 4 | tee run_r6b3_s2/console.log
+
+      - name: Show S2 result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          test -f run_r6b3_s2/result/s2_scaffold_ablation.json && cat run_r6b3_s2/result/s2_scaffold_ablation.json || true
+
+      - name: Upload S2 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_S2_SCAFFOLD_ABLATION
+          path: |
+            snn_transform_r6/run_r6b3_s2/result/s2_scaffold_ablation.json
+            snn_transform_r6/run_r6b3_s2/result/s2_history.csv
+            snn_transform_r6/run_r6b3_s2/result/generation_scaffold_final.png
+            snn_transform_r6/run_r6b3_s2/result/generation_native_final.png
+            snn_transform_r6/run_r6b3_s2/result/generated_tokens_scaffold_final.csv
+            snn_transform_r6/run_r6b3_s2/result/generated_tokens_native_final.csv
+            snn_transform_r6/run_r6b3_s2/result/maskgit_trace_scaffold_final.json
+            snn_transform_r6/run_r6b3_s2/result/maskgit_trace_native_final.json
+            snn_transform_r6/run_r6b3_s2/result/final_scaffold_state.npz
+            snn_transform_r6/run_r6b3_s2/result/final_native_state.npz
+            snn_transform_r6/run_r6b3_s2/console.log
+          if-no-files-found: warn
+          retention-days: 30
