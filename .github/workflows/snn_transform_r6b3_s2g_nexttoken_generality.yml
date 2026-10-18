@@ -1,0 +1,114 @@
+name: SNN Transform R6B3 S2G Next-Token Scaffold Generality
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [camp4]
+    paths:
+      - 'snn_transform_r6/RUN_TRIGGER_R6B3_S2G'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  s2g-nexttoken:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: camp4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_r6b3_s2g
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_r6b3_s2g/mnist.npz')
+          PY
+
+      - name: Static S2G guardrails
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            r6b3_s2g_generic_scaffold_nexttoken.py \
+            maskgit_input_representation.py \
+            maskgit_msdl_training.py \
+            r6b2_snn_encoder_p3_msdl.py \
+            ../snn_transform_p3_image/p3i_cb_exact_msdl.py
+          test -f frozen_r6b1/result/tokenizer.pt
+          grep -q "ordinary causal next-token scaffold" r6b3_s2g_generic_scaffold_nexttoken.py
+          grep -q "maskgit_training_used':False" r6b3_s2g_generic_scaffold_nexttoken.py
+          grep -q "future_ground_truth_visible':False" r6b3_s2g_generic_scaffold_nexttoken.py
+          if grep -q "sample_mask_set\|cosine_mask_ratio\|generation_tokens_maskgit\|scheduled_parallel_decode" r6b3_s2g_generic_scaffold_nexttoken.py; then
+            echo 'ERROR: MaskGIT task/controller logic leaked into non-MaskGIT S2G test'
+            exit 1
+          fi
+
+      - name: Run paired causal next-token scaffold test
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=run_r6b3_s2g/result
+          mkdir -p "$OUT"
+          python r6b3_s2g_generic_scaffold_nexttoken.py \
+            --data run_r6b3_s2g/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --out "$OUT" \
+            --D 96 \
+            --heads 8 \
+            --features 24 \
+            --ff 192 \
+            --R 7 \
+            --scaffold-contexts 2000 \
+            --scaffold-paths 2500 \
+            --scaffold-lr 0.6 \
+            --events 10000 \
+            --eval-pairs 2048 \
+            --internal-lr-scale 0.5 \
+            --encode-batch 256 \
+            --seed 7311 \
+            --report-every 2000 \
+            --threads 4 | tee run_r6b3_s2g/console.log
+
+      - name: Show S2G result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          test -f run_r6b3_s2g/result/s2g_nexttoken_generality.json && cat run_r6b3_s2g/result/s2g_nexttoken_generality.json || true
+
+      - name: Upload S2G artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_S2G_NEXTTOKEN_GENERALITY
+          path: |
+            snn_transform_r6/run_r6b3_s2g/result/s2g_nexttoken_generality.json
+            snn_transform_r6/run_r6b3_s2g/result/s2g_history.csv
+            snn_transform_r6/run_r6b3_s2g/console.log
+          if-no-files-found: warn
+          retention-days: 30
