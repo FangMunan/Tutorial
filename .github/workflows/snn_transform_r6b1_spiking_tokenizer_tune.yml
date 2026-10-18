@@ -1,0 +1,94 @@
+name: SNN Transform R6B1 Spiking Tokenizer Tune
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [camp4]
+    paths:
+      - 'snn_transform_r6/RUN_TRIGGER_R6B1_TUNE'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  tune:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tag: a025_t8
+            alpha: 0.25
+            steps: 8
+            gain: 1.6
+          - tag: a050_t8
+            alpha: 0.50
+            steps: 8
+            gain: 1.6
+          - tag: a075_t8
+            alpha: 0.75
+            steps: 8
+            gain: 1.6
+          - tag: a050_t16
+            alpha: 0.50
+            steps: 16
+            gain: 1.6
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: camp4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_r6b1_tune_${{ matrix.tag }}
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve('https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz','run_r6b1_tune_${{ matrix.tag }}/mnist.npz')
+          PY
+      - name: Run SNN tokenizer variant
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=run_r6b1_tune_${{ matrix.tag }}/result
+          mkdir -p "$OUT"
+          python r6b1_spiking_tokenizer.py \
+            --model snn \
+            --data run_r6b1_tune_${{ matrix.tag }}/mnist.npz \
+            --out "$OUT" \
+            --n-per-class 1200 \
+            --test-per-class 400 \
+            --epochs 12 \
+            --batch 96 \
+            --lr 0.002 \
+            --dim 16 \
+            --steps ${{ matrix.steps }} \
+            --alpha ${{ matrix.alpha }} \
+            --sensory-gain ${{ matrix.gain }} \
+            --beta 0.85 \
+            --commitment 0.25 \
+            --entropy-weight 0.02 \
+            --entropy-temp 0.5 \
+            --threads 4 \
+            --seed 6201 | tee run_r6b1_tune_${{ matrix.tag }}/console.log
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_${{ matrix.tag }}
+          path: |
+            snn_transform_r6/run_r6b1_tune_${{ matrix.tag }}/result/metrics.json
+            snn_transform_r6/run_r6b1_tune_${{ matrix.tag }}/result/reconstruction.png
+            snn_transform_r6/run_r6b1_tune_${{ matrix.tag }}/result/tokenizer.pt
+            snn_transform_r6/run_r6b1_tune_${{ matrix.tag }}/console.log
+          if-no-files-found: warn
+          retention-days: 30
