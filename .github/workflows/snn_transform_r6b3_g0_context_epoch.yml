@@ -15,9 +15,6 @@ on:
         description: Unconditional samples for each 8/16-round decode
         required: true
         default: '36'
-  push:
-    branches:
-      - r6b3-g0-training-v2
 
 permissions:
   contents: read
