@@ -1,0 +1,105 @@
+name: SNN Transform Gate D1.5-D1.6 audit
+
+on:
+  push:
+    branches:
+      - gate-d-plasticity-spectrum-audit
+    paths:
+      - 'snn_transform_r6/gate_d_d15_d16.py'
+      - '.github/workflows/snn_transform_gate_d_d15_d16.yml'
+  workflow_dispatch:
+    inputs:
+      contexts:
+        description: Number of diagnostic continuation contexts
+        required: true
+        default: '1024'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  d15-d16:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ github.token }}
+          run-id: 39139040624
+      - name: Download exact R6B3 two-epoch checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
+          path: snn_transform_r6/prior_g2
+          github-token: ${{ github.token }}
+          run-id: 39170815102
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_gate_d15_d16
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_gate_d15_d16/mnist.npz')
+          PY
+      - name: Static audit
+        working-directory: snn_transform_r6
+        run: |
+          set -euo pipefail
+          python -m py_compile gate_d_d15_d16.py gate_d_plasticity_audit.py
+          grep -q "excess_tortuosity_native_over_oracle" gate_d_d15_d16.py
+          grep -q "D16_SAME_STATE" gate_d_d15_d16.py
+          grep -q "gradient_oracle_enters_candidate_learning.*False" gate_d_d15_d16.py
+      - name: Run D1.5-D1.6
+        working-directory: snn_transform_r6
+        run: |
+          set -euo pipefail
+          CTX='1024'
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then CTX='${{ inputs.contexts }}'; fi
+          python gate_d_d15_d16.py \
+            --data run_gate_d15_d16/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
+            --out run_gate_d15_d16/result \
+            --contexts "$CTX" \
+            --seed 7311 --threads 4 \
+            | tee run_gate_d15_d16/console.log
+      - name: Show compact result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          p=pathlib.Path('run_gate_d15_d16/result')
+          for name in ('D15_ORACLE_ROTATION.json','D16_SAME_STATE_SUMMARY.json','D15_D16_MANIFEST.json'):
+              f=p/name
+              if not f.exists(): continue
+              d=json.load(open(f)); print('\n###',name)
+              if name=='D15_ORACLE_ROTATION.json':
+                  print(json.dumps({'native_tortuosity':d['native_W2']['tortuosity'],'oracle_tortuosity':d['oracle_matched']['tortuosity'],'excess':d['excess_tortuosity_native_over_oracle'],'orthogonal_path_fraction':d['orthogonal_path_fraction'],'rotation':d['rotation']},indent=2))
+              elif name=='D16_SAME_STATE_SUMMARY.json': print(json.dumps(d,indent=2))
+              else: print(json.dumps({k:d.get(k) for k in ('contexts','D15_excess_tortuosity','T2_audit')},indent=2))
+          PY
+      - name: Upload D1.5-D1.6 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D15_D16
+          path: |
+            snn_transform_r6/run_gate_d15_d16/result/
+            snn_transform_r6/run_gate_d15_d16/console.log
+          if-no-files-found: warn
+          retention-days: 30
