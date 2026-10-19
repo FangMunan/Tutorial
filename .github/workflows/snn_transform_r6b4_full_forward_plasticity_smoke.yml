@@ -2,6 +2,9 @@ name: SNN Transform R6B4 full forward plasticity smoke
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - r6b4-full-forward-plasticity
 
 permissions:
   contents: read
@@ -63,6 +66,8 @@ jobs:
           grep -q "beta2" r6b4_full_forward_plasticity.py
           grep -q "self.tok" r6b4_full_forward_plasticity.py
           grep -q "self.pos" r6b4_full_forward_plasticity.py
+          grep -q "NO new learned feedback" r6b4_full_forward_plasticity.py
+          grep -q "no_new_learned_feedback_or_inverse_matrix" r6b4_full_forward_plasticity_smoke.py
           grep -q "backpropagation_used.*False" r6b4_full_forward_plasticity_smoke.py
 
       - name: Run full forward plasticity smoke gate
@@ -79,7 +84,6 @@ jobs:
             --out "$OUT" \
             --contexts 12 \
             --aux-lr-scale 0.10 \
-            --extra-reciprocal-scale 1.0 \
             --seed 7311 --threads 4 | tee run_r6b4_full_forward_plasticity_smoke/console.log
 
       - name: Show result
@@ -95,7 +99,8 @@ jobs:
             'gates':d['gates'],
             'movement':d['movement'],
             'seen_token_movement':d['seen_token_movement'],
-            'extra_reciprocal_mean_abs':d['extra_reciprocal_mean_abs'],
+            'new_state_names':d['new_state_names'],
+            'forbidden_new_feedback_names':d['forbidden_new_feedback_names'],
           },indent=2))
           PY
 
@@ -103,7 +108,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SNN_TRANSFORM_R6B4_FULL_FORWARD_PLASTICITY_SMOKE
+          name: SNN_TRANSFORM_R6B4_FULL_FORWARD_PLASTICITY_SMOKE_V2
           path: |
             snn_transform_r6/run_r6b4_full_forward_plasticity_smoke/result/
             snn_transform_r6/run_r6b4_full_forward_plasticity_smoke/console.log
