@@ -1,0 +1,138 @@
+name: SNN Transform Gate D plasticity audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      contexts:
+        description: Number of diagnostic continuation contexts
+        required: true
+        default: '1024'
+      sketch_dim:
+        description: CountSketch dimension per forward group
+        required: true
+        default: '64'
+      skip_t1t2:
+        description: Run only D0 plus T0 audit
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gate-d:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+
+      - name: Download exact R6B3 two-epoch checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
+          path: snn_transform_r6/prior_g2
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39170815102
+
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_gate_d
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_gate_d/mnist.npz')
+          PY
+
+      - name: Static audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile gate_d_plasticity_audit.py gate_d_analyze.py
+          grep -q "mask2" gate_d_plasticity_audit.py
+          grep -q "D0 FAIL" gate_d_plasticity_audit.py
+          grep -q "context_cosine" gate_d_plasticity_audit.py
+          grep -q "A_M" gate_d_plasticity_audit.py
+          grep -q "A_E" gate_d_plasticity_audit.py
+          grep -q "gradient_oracle_enters_candidate_learning.*False" gate_d_plasticity_audit.py
+
+      - name: Run D0-D2 native audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXTRA=""
+          if [[ "${{ inputs.skip_t1t2 }}" == "true" ]]; then EXTRA="--skip-t1t2"; fi
+          python gate_d_plasticity_audit.py \
+            --data run_gate_d/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
+            --out run_gate_d/result \
+            --contexts "${{ inputs.contexts }}" \
+            --sketch-dim "${{ inputs.sketch_dim }}" \
+            --seed 7311 --threads 4 $EXTRA \
+            | tee run_gate_d/console.log
+
+      - name: Offline mathematical analysis
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python gate_d_analyze.py \
+            --in-dir run_gate_d/result \
+            --out run_gate_d/result \
+            | tee run_gate_d/analysis_console.log
+
+      - name: Show compact result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          out=pathlib.Path('run_gate_d/result')
+          for name in ('D0_PARITY.json','GATE_D_MANIFEST.json','GATE_D_ANALYSIS.json'):
+              p=out/name
+              if p.exists():
+                  d=json.load(open(p))
+                  print('\n###',name)
+                  if name=='D0_PARITY.json':
+                      print(json.dumps({'pass':d.get('pass'),'checkpoints':{k:v.get('pass') for k,v in d.get('checkpoints',{}).items()}},indent=2))
+                  elif name=='GATE_D_MANIFEST.json':
+                      print(json.dumps({k:d.get(k) for k in ('D0_pass','T1_T2_run','contexts','sketch_dim')},indent=2))
+                  else:
+                      print(json.dumps({'arms':list(d.get('arms',{})),'decision_logic':d.get('decision_logic')},indent=2))
+          PY
+
+      - name: Upload Gate D artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D_PLASTICITY_AUDIT
+          path: |
+            snn_transform_r6/run_gate_d/result/
+            snn_transform_r6/run_gate_d/console.log
+            snn_transform_r6/run_gate_d/analysis_console.log
+          if-no-files-found: warn
+          retention-days: 30
