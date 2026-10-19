@@ -2,9 +2,6 @@ name: SNN Transform R6B4 full-forward effectiveness test
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - r6b4-full-forward-plasticity
 
 permissions:
   contents: read
