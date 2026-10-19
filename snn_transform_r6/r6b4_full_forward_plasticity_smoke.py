@@ -10,7 +10,6 @@ continuation.
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import pickle
 import random
@@ -32,7 +31,6 @@ from maskgit_input_representation import build_input_embeddings
 from maskgit_msdl_training import sample_mask_set
 from r6b4_full_forward_plasticity import (
     FORWARD_PARAMETER_KEYS,
-    EXTRA_RECIPROCAL_KEYS,
     movement_report,
     upgrade_r6b3_system,
 )
@@ -49,10 +47,9 @@ def all_arrays_finite(obj):
 def max_old_forward_diff(before,system):
     mx=0.0;bad=[]
     for k,a in before.items():
-        b=np.asarray(getattr(system,k))
-        d=float(np.max(np.abs(b-a))) if a.size else 0.0
+        b=np.asarray(getattr(system,k));d=float(np.max(np.abs(b-a))) if a.size else 0.0
         mx=max(mx,d)
-        if d!=0.0: bad.append(k)
+        if d!=0.0:bad.append(k)
     return {'pass':not bad,'max_abs_diff':mx,'changed_fields':bad}
 
 
@@ -70,12 +67,11 @@ def main():
     ap.add_argument('--out',type=Path,required=True)
     ap.add_argument('--contexts',type=int,default=12)
     ap.add_argument('--aux-lr-scale',type=float,default=0.10)
-    ap.add_argument('--extra-reciprocal-scale',type=float,default=1.0)
     ap.add_argument('--encode-batch',type=int,default=256)
     ap.add_argument('--seed',type=int,default=7311)
     ap.add_argument('--threads',type=int,default=4)
     a=ap.parse_args()
-    if a.contexts<1: raise ValueError('--contexts must be positive')
+    if a.contexts<1:raise ValueError('--contexts must be positive')
     a.out.mkdir(parents=True,exist_ok=True)
     random.seed(a.seed);np.random.seed(a.seed);torch.manual_seed(a.seed);torch.set_num_threads(a.threads)
     device=torch.device('cpu')
@@ -83,10 +79,8 @@ def main():
     old_system,meta,train_rng,schedule=trainer.load_full_checkpoint(a.checkpoint)
     if abs(float(meta.get('context_epoch_equivalent',-1))-2.0)>1e-12:
         raise ValueError(f'expected exact 2.0-epoch checkpoint, got {meta.get("context_epoch_equivalent")}')
-    if getattr(old_system,'accum',0)!=0:
-        raise ValueError('2.0-epoch checkpoint is not at a clean update boundary')
+    if getattr(old_system,'accum',0)!=0:raise ValueError('checkpoint is not at a clean update boundary')
 
-    # Data/tokenizer recreation is identical to the R6B.3 formal trainer.
     xall,yall,_xte0,_yte0=core.load(a.data)
     x012,y012=core.subset012(xall,yall)
     xtr,_ytr,_xva,_yva=core.split(x012,y012,.1,7)
@@ -97,18 +91,19 @@ def main():
     old_forward={k:np.array(getattr(old_system,k),copy=True) for k in (
         'WQ','WK','WV','WO','W1','W2','WR','bq','bk','bv','bo','b1','b2',
         'gamma2','beta2','theta')}
+    old_learning_state_names=set(vars(old_system))
 
-    system=upgrade_r6b3_system(
-        old_system,tok0,pos0,seed=a.seed+880001,
-        aux_lr_scale=a.aux_lr_scale,
-        extra_reciprocal_scale=a.extra_reciprocal_scale)
+    system=upgrade_r6b3_system(old_system,tok0,pos0,aux_lr_scale=a.aux_lr_scale)
     upgrade_preserves_old=max_old_forward_diff(old_forward,system)
     if not upgrade_preserves_old['pass']:
         raise RuntimeError(f'upgrade changed pre-existing forward parameters: {upgrade_preserves_old}')
     before=system.forward_parameter_snapshot()
 
-    # M-off control on a disposable clone: learning machinery may evolve but no
-    # forward parameter is allowed to move when every forward LR is zero.
+    # Verify the restoration did not add learned feedback/inverse matrices.
+    new_state_names=set(vars(system))-old_learning_state_names
+    forbidden_new_feedback=[x for x in new_state_names if x.startswith('B')]
+    no_new_feedback=(len(forbidden_new_feedback)==0)
+
     control=pickle.loads(pickle.dumps(system,pickle.HIGHEST_PROTOCOL))
     zero_forward_learning_rates(control)
     ctrl_rng=np.random.default_rng(99173)
@@ -154,17 +149,15 @@ def main():
         'masked_target_token_ids_seen':seen_target_sorted,
     }
     finite=all_arrays_finite(system)
-    reciprocal={k:float(np.mean(np.abs(getattr(system,k)))) for k in EXTRA_RECIPROCAL_KEYS}
-    reciprocal_alive=bool(all(v>0 for v in reciprocal.values()))
 
     gates={
         'upgrade_preserves_all_preexisting_forward_values_exactly':upgrade_preserves_old['pass'],
+        'no_new_learned_feedback_or_inverse_matrix':bool(no_new_feedback),
         'm_off_freezes_every_forward_parameter_group':bool(m_off_pass),
         'all_forward_parameter_groups_move':bool(move['all_forward_groups_move']),
         'all_forward_parameter_groups_finite':bool(move['all_forward_groups_finite'] and finite['pass']),
         'all_seen_visible_token_embedding_rows_move':bool(seen_visible_coverage['all_seen_visible_rows_move']),
         'all_position_embedding_rows_move':bool(move['position_rows_moved']==move['position_rows_total']),
-        'extra_reciprocal_routes_alive':reciprocal_alive,
         'labels_enter_neural_input':False,
         'backpropagation_used':False,
     }
@@ -174,9 +167,10 @@ def main():
         'formal_training_continuation':False,
         'contexts_consumed_in_disposable_smoke':int(a.contexts),
         'aux_lr_scale':float(a.aux_lr_scale),
-        'extra_reciprocal_scale':float(a.extra_reciprocal_scale),
         'forward_parameter_keys':list(FORWARD_PARAMETER_KEYS),
-        'structural_fixed_parameters':['omega','maskO','mask1','mask2','eps2','learning-rate scalars','frozen SNN-VQ encoder/decoder'],
+        'structural_fixed_parameters':['theta','omega','maskO','mask1','mask2','eps2','learning-rate scalars','frozen SNN-VQ encoder/decoder'],
+        'new_state_names':sorted(new_state_names),
+        'forbidden_new_feedback_names':forbidden_new_feedback,
         'input_initialization_audit':input_audit,
         'tokenizer_metadata':tok_meta,
         'tokenizer_train_activity':sp_tr,
@@ -184,7 +178,6 @@ def main():
         'm_off_forward_movement':ctrl_move,
         'movement':move,
         'seen_token_movement':seen_visible_coverage,
-        'extra_reciprocal_mean_abs':reciprocal,
         'all_system_arrays_finite':finite,
         'contexts':rows,
         'gates':gates,
@@ -196,11 +189,8 @@ def main():
         'visual_rows_moved':move['visual_token_rows_moved'],
         'position_rows_moved':move['position_rows_moved'],
         'seen_visible':seen_visible_coverage,
-        'reciprocal':reciprocal,
     },indent=2),flush=True)
-    if not report['pass']:
-        raise SystemExit(2)
+    if not report['pass']:raise SystemExit(2)
 
 
-if __name__=='__main__':
-    main()
+if __name__=='__main__':main()
