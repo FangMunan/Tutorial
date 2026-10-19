@@ -1,0 +1,122 @@
+name: SNN Transform R6B3 decoder spatial refinement
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - r6b3-g0-training-v2
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  decoder-spatial-refinement:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: r6b3-g0-training-v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+
+      - name: Download frozen two-epoch checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
+          path: snn_transform_r6/prior_g2
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39170815102
+
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_r6b3_decoder_spatial_refinement
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_r6b3_decoder_spatial_refinement/mnist.npz')
+          PY
+
+      - name: Static inference-only spatial audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile r6b3_decoder_spatial_refinement_audit.py
+          test -f frozen_r6b1/result/tokenizer.pt
+          test -f prior_g2/result/checkpoint_2p0000epoch.pkl
+          grep -q "learning_performed.*False" r6b3_decoder_spatial_refinement_audit.py
+          grep -q "system_state_unchanged_audit" r6b3_decoder_spatial_refinement_audit.py
+          grep -q "3,4,5,6" r6b3_decoder_spatial_refinement_audit.py
+          grep -q "5.0,6.0,7.0,8.0" r6b3_decoder_spatial_refinement_audit.py
+          grep -q "spatial_mean_js_nats" r6b3_decoder_spatial_refinement_audit.py
+          grep -q "pair_mean_js_nats" r6b3_decoder_spatial_refinement_audit.py
+
+      - name: Refine decoder with spatial diagnostics
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=run_r6b3_decoder_spatial_refinement/result
+          mkdir -p "$OUT"
+          python r6b3_decoder_spatial_refinement_audit.py \
+            --data run_r6b3_decoder_spatial_refinement/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
+            --out "$OUT" \
+            --rounds 3,4,5,6 \
+            --temperatures 5.0,6.0,7.0,8.0 \
+            --samples 512 \
+            --grid-samples 36 \
+            --encode-batch 256 \
+            --seed 7311 --threads 4 | tee run_r6b3_decoder_spatial_refinement/console.log
+
+      - name: Show concise spatial refinement result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          test -f run_r6b3_decoder_spatial_refinement/result/DECODER_SPATIAL_REFINEMENT_RESULTS.json && python - <<'PY'
+          import json
+          p='run_r6b3_decoder_spatial_refinement/result/DECODER_SPATIAL_REFINEMENT_RESULTS.json'
+          d=json.load(open(p))
+          print(json.dumps({
+            'real_spatial_reference':d['real_spatial_reference'],
+            'best_by_global_token_js':d['best_by_global_token_js'],
+            'best_by_spatial_position_js':d['best_by_spatial_position_js'],
+            'best_by_adjacent_pair_js':d['best_by_adjacent_pair_js'],
+            'best_by_class_entropy':d['best_by_class_entropy'],
+            'pareto_front':d['pareto_front_global_spatial_pair_js'],
+            'r4_t6':d['settings']['r4_t6']['summary'],
+            'r6_t6':d['settings']['r6_t6']['summary'],
+            'system_state_unchanged_audit':d['system_state_unchanged_audit'],
+          },indent=2))
+          PY
+
+      - name: Upload spatial refinement artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_TWO_EPOCH_DECODER_SPATIAL_REFINEMENT
+          path: |
+            snn_transform_r6/run_r6b3_decoder_spatial_refinement/result/
+            snn_transform_r6/run_r6b3_decoder_spatial_refinement/console.log
+          if-no-files-found: warn
+          retention-days: 30
