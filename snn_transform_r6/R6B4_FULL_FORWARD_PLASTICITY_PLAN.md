@@ -2,46 +2,42 @@
 
 Status: IMPLEMENTATION BRANCH / R6B.3 BASELINE PRESERVED.
 
-This branch exists because R6B.3 intentionally froze several forward parameters that had previously been part of the agreed "complete forward-parameter plasticity" target. The restoration does **not** change the MaskGIT objective, label boundary, tokenizer, or the basic local MSDL update principle.
+R6B.3 unintentionally left several ordinary forward parameters fixed relative to the previously agreed complete-forward-plasticity target. R6B.4 restores those parameters without changing the MaskGIT objective or replacing the existing P3/MSDL learning rule.
 
-## Forward parameters that must be plastic
+## Plastic forward parameters
 
-The label-free image model has no class embedding. The forward parameter set to be plastic is therefore:
+The label-free model has no class embedding. The forward parameter set is:
 
 - visual token embedding table, initialized from the frozen SNN-VQ codebook geometry;
 - 7x7 positional embedding table, initialized from the deterministic 2-D sinusoidal representation;
-- Q/K/V projection weights and biases: `WQ, WK, WV, bq, bk, bv`;
-- attention output projection and bias: `WO, bo`;
-- normalization affine parameters: `gamma2, beta2`;
-- FFN weights and biases: `W1, b1, W2, b2`;
-- neuronal FFN threshold `theta` (kept in the forward parameter audit because it directly changes the forward map);
-- categorical output head `WR` (its last constant feature already acts as the readout bias).
+- `WQ, WK, WV` and `bq, bk, bv`;
+- `WO` and `bo`;
+- normalization affine parameters `gamma2, beta2`;
+- `W1, b1, W2, b2`;
+- categorical output head `WR` (its constant feature supplies the readout bias degree of freedom).
 
-Structural/non-forward-learning quantities remain fixed: sparse masks, positive-RF basis `omega`, normalization epsilon, learning-rate scalars, and the frozen SNN-VQ encoder/decoder itself.
+`theta` remains a fixed neuronal threshold rather than a standard MaskGIT affine parameter. Structural quantities also remain fixed: sparse masks, positive-RF basis `omega`, normalization epsilon, learning-rate scalars, and the frozen SNN-VQ encoder/decoder.
 
-## What stays unchanged
+## Learning structure is not changed
 
-- MaskGIT training masks: `r~U[0,1)`, `gamma(r)=cos(pi*r/2)`, all masked targets use one immutable corrupted context.
-- No class labels enter input, learning, or generation.
-- No backpropagation/BPTT/autograd optimizer.
-- Forward learning remains local MSDL `dW ~ M_post E_pre^T` with persistent Izhikevich-derived E/M state.
-- Existing P3 sufficient states `H/g`, collective K route, and the seven previously plastic forward matrices remain intact.
+- MaskGIT masking remains `r~U[0,1)`, `gamma(r)=cos(pi*r/2)`, with all masked targets evaluated from one immutable corrupted context.
+- No label enters neural input, MSDL learning, or generation.
+- No BP/BPTT/autograd optimizer is introduced.
+- No new learned feedback/inverse matrix is introduced.
+- No new finite-difference or perturbation-based credit route is introduced.
+- The already-developed P3 local rule remains `dW ~ M_post E_pre^T` with persistent Izhikevich-derived E/M states.
 
-## Credit coverage restoration
-
-R6B.3's local credit machinery already reaches `WR -> W2/W1/WO -> Q/K/V`, but it stopped before the normalization affine and input embedding tables. R6B.4 extends the **same existing reciprocal-mirror mechanism** to the missing local interfaces so that these already-existing forward parameters can receive an M state. This is a coverage extension of the current P3/MSDL implementation, not a new objective or conventional optimizer.
-
-Extra reciprocal states are learning machinery, not forward inference parameters. They are used only to deliver local modulatory state to the newly unfrozen forward parameters.
+The restoration therefore extends parameter coverage using local E/M signals already present in R6B.3/P3. Biases are ordinary constant-input local synapses. The normalization affine parameters reuse the existing W1-side local M state through the fixed sparse fan-out topology. Token and position embeddings reuse the already-existing residual, Q, collective-K and V local M signals together with the resident forward attention coefficients. These operations add no learned inverse path.
 
 ## First gate
 
-Before any long 2->3 epoch continuation, run a short upgrade/smoke gate from the exact 2.0-epoch R6B.3 checkpoint and require:
+Before any long continuation, the exact R6B.3 2.0-epoch checkpoint is upgraded only in memory and a short disposable smoke run must establish:
 
-1. all old and newly restored forward parameter groups are finite;
-2. every forward parameter group moves under learning;
-3. visual-token rows (not only MASK) and position rows show nonzero movement;
-4. no label enters the neural path;
-5. no BP/autograd optimizer is introduced;
-6. the original 2.0-epoch checkpoint remains untouched on the R6B.3 branch.
+1. all pre-existing forward values are unchanged at upgrade time;
+2. no new learned `B*` feedback/inverse matrix appears;
+3. with all forward learning rates disabled, every forward parameter remains fixed;
+4. under MSDL learning, every restored forward parameter group moves and remains finite;
+5. visible token-embedding rows encountered by the smoke stream move, and all 49 position rows receive plastic updates;
+6. labels remain absent and no BP/autograd optimizer is introduced.
 
-Only after this gate passes should generation training continue under the restored parameter set.
+The original R6B.3 branch and exact 2.0-epoch checkpoint remain untouched. A formal 2->3 epoch experiment should be launched only after this restoration gate passes.
