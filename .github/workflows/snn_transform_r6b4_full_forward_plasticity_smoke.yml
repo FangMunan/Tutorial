@@ -1,0 +1,114 @@
+name: SNN Transform R6B4 full forward plasticity smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - r6b4-full-forward-plasticity
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  full-forward-plasticity-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: r6b4-full-forward-plasticity
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+
+      - name: Download exact R6B3 two-epoch checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
+          path: snn_transform_r6/prior_g2
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39170815102
+
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_r6b4_full_forward_plasticity_smoke
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_r6b4_full_forward_plasticity_smoke/mnist.npz')
+          PY
+
+      - name: Static audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile r6b4_full_forward_plasticity.py r6b4_full_forward_plasticity_smoke.py
+          grep -q "FORWARD_PARAMETER_KEYS" r6b4_full_forward_plasticity.py
+          grep -q "gamma2" r6b4_full_forward_plasticity.py
+          grep -q "beta2" r6b4_full_forward_plasticity.py
+          grep -q "self.tok" r6b4_full_forward_plasticity.py
+          grep -q "self.pos" r6b4_full_forward_plasticity.py
+          grep -q "backpropagation_used.*False" r6b4_full_forward_plasticity_smoke.py
+
+      - name: Run full forward plasticity smoke gate
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=run_r6b4_full_forward_plasticity_smoke/result
+          mkdir -p "$OUT"
+          python r6b4_full_forward_plasticity_smoke.py \
+            --data run_r6b4_full_forward_plasticity_smoke/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
+            --out "$OUT" \
+            --contexts 12 \
+            --aux-lr-scale 0.10 \
+            --extra-reciprocal-scale 1.0 \
+            --seed 7311 --threads 4 | tee run_r6b4_full_forward_plasticity_smoke/console.log
+
+      - name: Show result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          test -f run_r6b4_full_forward_plasticity_smoke/result/R6B4_FULL_FORWARD_PLASTICITY_SMOKE.json && python - <<'PY'
+          import json
+          p='run_r6b4_full_forward_plasticity_smoke/result/R6B4_FULL_FORWARD_PLASTICITY_SMOKE.json'
+          d=json.load(open(p))
+          print(json.dumps({
+            'pass':d['pass'],
+            'gates':d['gates'],
+            'movement':d['movement'],
+            'seen_token_movement':d['seen_token_movement'],
+            'extra_reciprocal_mean_abs':d['extra_reciprocal_mean_abs'],
+          },indent=2))
+          PY
+
+      - name: Upload smoke artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B4_FULL_FORWARD_PLASTICITY_SMOKE
+          path: |
+            snn_transform_r6/run_r6b4_full_forward_plasticity_smoke/result/
+            snn_transform_r6/run_r6b4_full_forward_plasticity_smoke/console.log
+          if-no-files-found: warn
+          retention-days: 30
