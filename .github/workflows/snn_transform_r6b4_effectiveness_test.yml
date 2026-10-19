@@ -1,0 +1,115 @@
+name: SNN Transform R6B4 full-forward effectiveness test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - r6b4-full-forward-plasticity
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  effectiveness-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: r6b4-full-forward-plasticity
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+
+      - name: Download exact R6B3 two-epoch checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
+          path: snn_transform_r6/prior_g2
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39170815102
+
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_r6b4_effectiveness
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_r6b4_effectiveness/mnist.npz')
+          PY
+
+      - name: Static audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile r6b4_full_forward_plasticity.py r6b4_full_forward_effectiveness_test.py
+          grep -q "r6b3_frozen_new_params" r6b4_full_forward_effectiveness_test.py
+          grep -q "r6b4_aux_0p1" r6b4_full_forward_effectiveness_test.py
+          grep -q "r6b4_aux_1p0" r6b4_full_forward_effectiveness_test.py
+          grep -q "paired_training_stream_identical" r6b4_full_forward_effectiveness_test.py
+          grep -q "backpropagation_or_autograd_used.*False" r6b4_full_forward_effectiveness_test.py
+
+      - name: Run paired effectiveness test
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=run_r6b4_effectiveness/result
+          mkdir -p "$OUT"
+          python r6b4_full_forward_effectiveness_test.py \
+            --data run_r6b4_effectiveness/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
+            --out "$OUT" \
+            --contexts 1024 \
+            --eval-images 512 \
+            --gen-samples 256 \
+            --grid-samples 36 \
+            --seed 7311 --threads 4 --report-every 256 \
+            | tee run_r6b4_effectiveness/console.log
+
+      - name: Show compact comparison
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          test -f run_r6b4_effectiveness/result/R6B4_FULL_FORWARD_EFFECTIVENESS_RESULTS.json && python - <<'PY'
+          import json
+          p='run_r6b4_effectiveness/result/R6B4_FULL_FORWARD_EFFECTIVENESS_RESULTS.json'
+          d=json.load(open(p))
+          print(json.dumps({
+            'paired_training_stream_identical':d['paired_training_stream_identical'],
+            'contexts_per_arm':d['contexts_per_arm'],
+            'context_epoch_fraction_per_arm':d['context_epoch_fraction_per_arm'],
+            'direct_paired_comparison':d['direct_paired_comparison'],
+            'full_1p0_movement':d['movement']['r6b4_aux_1p0'],
+          },indent=2))
+          PY
+
+      - name: Upload effectiveness artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B4_FULL_FORWARD_EFFECTIVENESS_TEST
+          path: |
+            snn_transform_r6/run_r6b4_effectiveness/result/
+            snn_transform_r6/run_r6b4_effectiveness/console.log
+          if-no-files-found: warn
+          retention-days: 30
