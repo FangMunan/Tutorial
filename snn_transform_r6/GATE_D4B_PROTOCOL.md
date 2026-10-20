@@ -87,3 +87,5 @@ Require proposal IDs exact and finite metric/effect entries within `1e-7`, with 
 - Otherwise report mixed evidence without forcing a case.
 
 No D4B result by itself proves a training-time compensatory mechanism. D4B attributes terminal forward-parameter causality.
+
+Execution is frozen to `.github/workflows/snn_transform_gate_d_d4b.yml` on the diagnostic branch.
