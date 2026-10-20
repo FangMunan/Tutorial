@@ -1,0 +1,114 @@
+name: SNN Transform Gate D5A pathway-specific local-credit divergence
+
+on:
+  push:
+    branches:
+      - gate-d-plasticity-spectrum-audit
+    paths:
+      - 'snn_transform_r6/gate_d_d5a.py'
+      - 'snn_transform_r6/GATE_D5A_PROTOCOL.md'
+      - '.github/workflows/snn_transform_gate_d_d5a.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  d5a-credit-divergence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+      - name: Download exact R6B3 two-epoch checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
+          path: snn_transform_r6/prior_g2
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39170815102
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_gate_d5a
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_gate_d5a/mnist.npz')
+          PY
+      - name: Static audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile gate_d_d5a.py gate_d_plasticity_audit.py gate_d_d3e_runtime.py r6b4_full_forward_plasticity.py
+          grep -q "training_rule_modified.*False" gate_d_d5a.py
+          grep -q "candidate_repair_introduced.*False" gate_d_d5a.py
+          grep -q "exact_event_oracles" gate_d_d5a.py
+          grep -q "grad_z" gate_d_d5a.py
+          grep -q "W2_A_M" gate_d_d5a.py
+          grep -q "WO_A_M" gate_d_d5a.py
+          grep -q "bo_A_M" gate_d_d5a.py
+          grep -q "reset_boundary(plain,'F_EM')" gate_d_d5a.py
+          grep -q "same-run plain/instrumented" GATE_D5A_PROTOCOL.md
+      - name: Run Gate D5A
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p run_gate_d5a/result
+          python gate_d_d5a.py \
+            --data run_gate_d5a/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
+            --out run_gate_d5a/result \
+            --contexts 1024 --encode-batch 256 --seed 7311 --threads 4 \
+            | tee run_gate_d5a/console.log
+      - name: Show compact D5A result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          f=pathlib.Path('run_gate_d5a/result/D5A_SUMMARY.json')
+          if not f.exists():
+              print('D5A_SUMMARY.json not produced')
+              q=pathlib.Path('run_gate_d5a/result/D5A_ORACLE_SELF_TEST.json')
+              if q.exists(): print(q.read_text())
+          else:
+              d=json.load(open(f))
+              compact={
+                  'oracle_self_test':d.get('oracle_self_test'),
+                  'same_run_parity':{k:v.get('pass') for k,v in d.get('same_run_instrumentation_parity',{}).items()},
+                  'identity_max':d.get('native_update_identity_max_abs'),
+                  'N':{k:{'A':v['context_alignment'],'M':v.get('M_alignment'),'E':v.get('E_alignment',v.get('constant_E_alignment')),'T_excess':v['excess_tortuosity'],'R_perp':v['orthogonal_path_fraction'],'lags':v['lags']} for k,v in d.get('N',{}).items()},
+                  'F_EM':{k:{'A':v['context_alignment'],'M':v.get('M_alignment'),'E':v.get('E_alignment',v.get('constant_E_alignment')),'T_excess':v['excess_tortuosity'],'R_perp':v['orthogonal_path_fraction'],'lags':v['lags']} for k,v in d.get('F_EM',{}).items()},
+                  'paired_F_minus_N':d.get('paired_F_EM_minus_N'),
+              }
+              print(json.dumps(compact,indent=2))
+          PY
+      - name: Upload Gate D5A artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D5A_PATHWAY_LOCAL_CREDIT_DIVERGENCE
+          path: |
+            snn_transform_r6/run_gate_d5a/result/
+            snn_transform_r6/run_gate_d5a/console.log
+          if-no-files-found: warn
+          retention-days: 30
