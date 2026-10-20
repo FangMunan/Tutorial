@@ -1,0 +1,116 @@
+name: SNN Transform Gate D4B O-block decomposition
+
+on:
+  push:
+    branches:
+      - gate-d-plasticity-spectrum-audit
+    paths:
+      - 'snn_transform_r6/gate_d_d4b.py'
+      - 'snn_transform_r6/GATE_D4B_PROTOCOL.md'
+      - '.github/workflows/snn_transform_gate_d_d4b.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  d4b-o-decomposition:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+      - name: Download provenance-correct D3E terminal artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D3E_FULL_TRAJECTORY_BOUNDARY_INTERVENTION
+          path: snn_transform_r6/d3e_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39454173518
+      - name: Download successful D4A artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D4A_TERMINAL_ANTAGONISM_MAP
+          path: snn_transform_r6/d4a_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39483623999
+      - name: Download frozen D3E execution anchor
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_D3E_R6B4_NATIVE_EXECUTION_ANCHOR
+          path: snn_transform_r6/d3e_anchor
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39450940230
+      - name: Static audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile gate_d_d4b.py gate_d_d3e_eval.py gate_d_d3e_runtime.py
+          grep -q "training_performed.*False" gate_d_d4b.py
+          grep -q "E_M_states_intervened.*False" gate_d_d4b.py
+          grep -q "I_WO_bo" gate_d_d4b.py
+          grep -q "I_W2_WO" gate_d_d4b.py
+          grep -q "O_joint" gate_d_d4b.py
+          grep -q "0.25" gate_d_d4b.py
+          grep -q "0.50\|0.5" gate_d_d4b.py
+          grep -q "0.75" gate_d_d4b.py
+          test -f d3e_source/result/D3E_N_terminal.pkl
+          test -f d3e_source/result/D3E_F_EM_terminal.pkl
+          test -f d4a_source/result/D4A_SUMMARY.json
+          test -f d4a_source/result/D4A_EFFECT_ARRAYS.npz
+      - name: Run Gate D4B
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p run_gate_d4b/result
+          python gate_d_d4b.py \
+            --d3e-artifact d3e_source \
+            --d4a-artifact d4a_source \
+            --anchor-artifact d3e_anchor \
+            --out run_gate_d4b/result \
+            --bootstrap 10000 \
+            | tee run_gate_d4b/console.log
+      - name: Show compact D4B result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          f=pathlib.Path('run_gate_d4b/result/D4B_SUMMARY.json')
+          if not f.exists():
+              print('D4B_SUMMARY.json not produced')
+          else:
+              d=json.load(open(f))
+              print(json.dumps({
+                  'calibration_pass':d.get('calibration_pass'),
+                  'case_candidate':d.get('case_candidate'),
+                  'case_diagnostics':d.get('case_diagnostics'),
+                  'primary_direct':{
+                      m:{k:v for k,v in dd.items() if k in ('S_WO','S_bo','N_WO','N_bo','I_WO_bo','I_W2_WO','I_W2_bo')}
+                      for m,dd in d.get('direct_decomposition',{}).items() if m in ('F61','D_non61')
+                  },
+                  'WO_primary_curves':{
+                      bg:{m:x for m,x in md.items() if m in ('F61','D_non61')}
+                      for bg,md in d.get('dose_response',{}).get('WO',{}).items()
+                  },
+              },indent=2))
+          PY
+      - name: Upload Gate D4B artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D4B_O_BLOCK_DECOMPOSITION
+          path: |
+            snn_transform_r6/run_gate_d4b/result/
+            snn_transform_r6/run_gate_d4b/console.log
+          if-no-files-found: warn
+          retention-days: 30
