@@ -6,6 +6,7 @@ on:
       - gate-d-plasticity-spectrum-audit
     paths:
       - 'snn_transform_r6/gate_d_d4a.py'
+      - 'snn_transform_r6/gate_d_d4a_calibration_fix.py'
       - 'snn_transform_r6/GATE_D4A_PROTOCOL.md'
       - '.github/workflows/snn_transform_gate_d_d4a.yml'
   workflow_dispatch:
@@ -46,12 +47,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m py_compile gate_d_d4a.py gate_d_d3e_eval.py gate_d_d3e_runtime.py
+          python -m py_compile gate_d_d4a.py gate_d_d4a_calibration_fix.py gate_d_d3e_eval.py gate_d_d3e_runtime.py
           grep -q "training_performed.*False" gate_d_d4a.py
           grep -q "E_M_states_intervened.*False" gate_d_d4a.py
           grep -q "W2_epistasis" gate_d_d4a.py
           grep -q "med_W2_only" gate_d_d4a.py
           grep -q "med_W2_b2" gate_d_d4a.py
+          grep -q "NaN" gate_d_d4a_calibration_fix.py
           test -f d3e_source/result/D3E_N_terminal.pkl
           test -f d3e_source/result/D3E_F_EM_terminal.pkl
           test -f d3e_source/result/D3E_EFFECT_ARRAYS.npz
@@ -61,7 +63,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p run_gate_d4a/result
-          python gate_d_d4a.py \
+          python gate_d_d4a_calibration_fix.py \
             --d3e-artifact d3e_source \
             --anchor-artifact d3e_anchor \
             --out run_gate_d4a/result \
