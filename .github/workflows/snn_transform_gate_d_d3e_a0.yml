@@ -1,0 +1,116 @@
+name: SNN Transform Gate D3E A0 provenance recovery
+
+on:
+  push:
+    branches:
+      - gate-d-plasticity-spectrum-audit
+    paths:
+      - 'snn_transform_r6/gate_d_d3e_a0.py'
+      - '.github/workflows/snn_transform_gate_d_d3e_a0.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  d3e-a0-provenance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+      - name: Download exact R6B3 two-epoch checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
+          path: snn_transform_r6/prior_g2
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39170815102
+      - name: Download authoritative historical effectiveness artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B4_FULL_FORWARD_EFFECTIVENESS_TEST
+          path: snn_transform_r6/historical_effectiveness
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39230496177
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_gate_d3e_a0
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_gate_d3e_a0/mnist.npz')
+          PY
+      - name: Static audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile gate_d_d3e_a0.py
+          grep -q "9917311" gate_d_d3e_a0.py
+          grep -q "9917312" gate_d_d3e_a0.py
+          grep -q "39230496177" gate_d_d3e_a0.py
+          grep -q "causal_trace_sample_equality_required.*False" gate_d_d3e_a0.py
+          test -f historical_effectiveness/result/r6b3_frozen_new_params_r3_t8_traces.json
+      - name: Run D3E-A0 provenance smoke test
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python gate_d_d3e_a0.py \
+            --data run_gate_d3e_a0/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
+            --historical-traces historical_effectiveness/result/r6b3_frozen_new_params_r3_t8_traces.json \
+            --out run_gate_d3e_a0/result \
+            --contexts 1024 --seed 7311 --threads 4 \
+            | tee run_gate_d3e_a0/console.log
+      - name: Show compact A0 result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          f=pathlib.Path('run_gate_d3e_a0/result/D3E_A0_PROVENANCE_REPORT.json')
+          if not f.exists():
+              print('D3E_A0_PROVENANCE_REPORT.json not produced')
+          else:
+              d=json.load(open(f))
+              print(json.dumps({
+                  'all_pass':d.get('all_pass'),
+                  'A0_1':d.get('A0_1_shared_input_provenance',{}).get('pass'),
+                  'A0_2':d.get('A0_2_terminal_r6b3_state',{}).get('pass'),
+                  'terminal_hash':d.get('A0_2_terminal_r6b3_state',{}).get('observed_ndarray_state_sha256'),
+                  'A0_3':d.get('A0_3_historical_schedule',{}).get('pass'),
+                  'A0_4':d.get('A0_4_reference_predictor_reconstruction',{}),
+                  'A0_5_pass':d.get('A0_5_causal_gate_a_replay',{}).get('pass'),
+                  'A0_5_effects':d.get('A0_5_causal_gate_a_replay',{}).get('effects'),
+                  'A0_5_abs_diff':d.get('A0_5_causal_gate_a_replay',{}).get('abs_diff'),
+              },indent=2))
+          PY
+      - name: Upload D3E-A0 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D3E_A0_PROVENANCE_RECOVERY
+          path: |
+            snn_transform_r6/run_gate_d3e_a0/result/
+            snn_transform_r6/run_gate_d3e_a0/console.log
+          if-no-files-found: warn
+          retention-days: 30
