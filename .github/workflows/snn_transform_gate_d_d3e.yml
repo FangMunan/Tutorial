@@ -1,13 +1,136 @@
 name: SNN Transform Gate D3E full-trajectory boundary intervention
 
 on:
+  push:
+    branches:
+      - gate-d-plasticity-spectrum-audit
+    paths:
+      - 'snn_transform_r6/gate_d_d3e.py'
+      - 'snn_transform_r6/GATE_D3E_PROTOCOL.md'
+      - '.github/workflows/snn_transform_gate_d_d3e.yml'
   workflow_dispatch:
+    inputs:
+      gen_samples:
+        description: Secondary autonomous rollout samples per arm
+        required: true
+        default: '256'
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  migration-hold:
+  d3e-full-trajectory:
     runs-on: ubuntu-24.04
+    timeout-minutes: 360
     steps:
-      - run: echo 'D3E harness migration hold; no scientific run from this revision.'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+      - name: Download exact R6B3 two-epoch checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
+          path: snn_transform_r6/prior_g2
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39170815102
+      - name: Download frozen D3E R6B4-native execution anchor
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_D3E_R6B4_NATIVE_EXECUTION_ANCHOR
+          path: snn_transform_r6/prior_d3e_execution_anchor
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39450940230
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_gate_d3e
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_gate_d3e/mnist.npz')
+          PY
+      - name: Static audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile gate_d_d3e.py gate_d_d3e_v2.py gate_d_d3e_eval.py gate_d_d3e_runtime.py gate_d_d3e_a0.py gate_d_plasticity_audit.py gate_d_d15_d16.py
+          grep -q "P0_shared_provenance_hashes_exact" gate_d_d3e_v2.py
+          grep -q "P4_R6B4_N_plain_instrumented_same_run_bitwise" gate_d_d3e_v2.py
+          grep -q "P6_R6B4_N_frozen_execution_anchor_functional_parity" gate_d_d3e_v2.py
+          grep -q "canonical fresh" GATE_D3E_PROTOCOL.md
+          grep -q "M2_shared_with_b2" gate_d_d3e_v2.py
+          grep -q "candidate_metaplastic_rule_introduced.*False" gate_d_d3e_v2.py
+          if grep -q "0.7311738063456619).*1e-10" gate_d_d3e_v2.py; then
+            echo 'forbidden brittle alignment hard gate still present' >&2
+            exit 1
+          fi
+      - name: Run Gate D3E
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          GEN='256'
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            GEN='${{ inputs.gen_samples }}'
+          fi
+          python gate_d_d3e.py \
+            --data run_gate_d3e/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
+            --anchor prior_d3e_execution_anchor \
+            --out run_gate_d3e/result \
+            --contexts 1024 --eval-images 256 --gen-samples "$GEN" \
+            --seed 7311 --threads 4 \
+            | tee run_gate_d3e/console.log
+      - name: Show compact result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          p=pathlib.Path('run_gate_d3e/result')
+          f=p/'D3E_SUMMARY.json'
+          if f.exists():
+              d=json.load(open(f))
+              print(json.dumps({
+                  'all_provenance_gates_pass':d.get('all_provenance_gates_pass'),
+                  'provenance_gates':d.get('provenance_gates'),
+                  'classification':d.get('classification'),
+                  'mechanism_pass':d.get('mechanism_pass'),
+                  'phenotype_pass':d.get('phenotype_pass'),
+                  'mechanism':d.get('mechanism'),
+                  'F_EM_rescue':d.get('paired_rescue_native_minus_arm',{}).get('F_EM'),
+                  'P6_execution_anchor_parity':d.get('P6_execution_anchor_parity'),
+                  'alignment_historical_reference_diagnostic_only':d.get('alignment_historical_reference_diagnostic_only'),
+              },indent=2))
+          else:
+              print('D3E_SUMMARY.json not produced')
+              for q in ['P4_NATIVE_INSTRUMENTATION_PARITY.json','P5_FOUR_ARM_STREAM_PAIRING.json','P6_R6B4_NATIVE_EXECUTION_ANCHOR_PARITY.json']:
+                  z=p/q
+                  if z.exists(): print(q, z.read_text())
+          PY
+      - name: Upload Gate D3E artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D3E_FULL_TRAJECTORY_BOUNDARY_INTERVENTION
+          path: |
+            snn_transform_r6/run_gate_d3e/result/
+            snn_transform_r6/run_gate_d3e/console.log
+          if-no-files-found: warn
+          retention-days: 30
