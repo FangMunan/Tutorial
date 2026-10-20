@@ -1,0 +1,107 @@
+name: SNN Transform Gate D4A terminal antagonism mapping
+
+on:
+  push:
+    branches:
+      - gate-d-plasticity-spectrum-audit
+    paths:
+      - 'snn_transform_r6/gate_d_d4a.py'
+      - 'snn_transform_r6/GATE_D4A_PROTOCOL.md'
+      - '.github/workflows/snn_transform_gate_d_d4a.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  d4a-terminal-map:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+      - name: Download provenance-correct D3E terminal artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D3E_FULL_TRAJECTORY_BOUNDARY_INTERVENTION
+          path: snn_transform_r6/d3e_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39454173518
+      - name: Download frozen D3E execution anchor
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_D3E_R6B4_NATIVE_EXECUTION_ANCHOR
+          path: snn_transform_r6/d3e_anchor
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39450940230
+      - name: Static audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile gate_d_d4a.py gate_d_d3e_eval.py gate_d_d3e_runtime.py
+          grep -q "training_performed.*False" gate_d_d4a.py
+          grep -q "E_M_states_intervened.*False" gate_d_d4a.py
+          grep -q "W2_epistasis" gate_d_d4a.py
+          grep -q "med_W2_only" gate_d_d4a.py
+          grep -q "med_W2_b2" gate_d_d4a.py
+          test -f d3e_source/result/D3E_N_terminal.pkl
+          test -f d3e_source/result/D3E_F_EM_terminal.pkl
+          test -f d3e_source/result/D3E_EFFECT_ARRAYS.npz
+      - name: Run Gate D4A
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p run_gate_d4a/result
+          python gate_d_d4a.py \
+            --d3e-artifact d3e_source \
+            --anchor-artifact d3e_anchor \
+            --out run_gate_d4a/result \
+            --bootstrap 10000 \
+            | tee run_gate_d4a/console.log
+      - name: Show compact D4A result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          f=pathlib.Path('run_gate_d4a/result/D4A_SUMMARY.json')
+          if not f.exists():
+              print('D4A_SUMMARY.json not produced')
+          else:
+              d=json.load(open(f))
+              compact={
+                  'calibration_pass':d.get('calibration_pass'),
+                  'antagonistic_load':d.get('total_antagonistic_load_F_minus_W2'),
+                  'ranking':d.get('ranking'),
+                  'primary':{
+                      b:{m:{
+                          'S':x['sufficiency'],
+                          'N':x['necessity'],
+                          'I':x['W2_epistasis'],
+                          'bidirectional_CI_positive':x['bidirectional_CI_positive'],
+                          'specific_epistasis_CI_positive':x['specific_epistasis_CI_positive'],
+                      } for m,x in bd['metrics'].items() if m in ('F61','D_non61')}
+                      for b,bd in d.get('blocks',{}).items()
+                  },
+              }
+              print(json.dumps(compact,indent=2))
+          PY
+      - name: Upload Gate D4A artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D4A_TERMINAL_ANTAGONISM_MAP
+          path: |
+            snn_transform_r6/run_gate_d4a/result/
+            snn_transform_r6/run_gate_d4a/console.log
+          if-no-files-found: warn
+          retention-days: 30
