@@ -1,0 +1,111 @@
+name: SNN Transform Gate D3E-A0 terminal hash diagnostic
+
+on:
+  push:
+    branches:
+      - gate-d-plasticity-spectrum-audit
+    paths:
+      - 'snn_transform_r6/gate_d_d3e_a0_hashdiag.py'
+      - '.github/workflows/snn_transform_gate_d_d3e_a0_hashdiag.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  a0-hashdiag:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ github.token }}
+          run-id: 39139040624
+      - name: Download exact R6B3 two-epoch checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
+          path: snn_transform_r6/prior_g2
+          github-token: ${{ github.token }}
+          run-id: 39170815102
+      - name: Download exact historical R6B4 effectiveness artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B4_FULL_FORWARD_EFFECTIVENESS_TEST
+          path: snn_transform_r6/prior_effectiveness
+          github-token: ${{ github.token }}
+          run-id: 39230496177
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_gate_d3e_a0_hashdiag
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_gate_d3e_a0_hashdiag/mnist.npz')
+          PY
+      - name: Static audit
+        working-directory: snn_transform_r6
+        run: |
+          set -euo pipefail
+          python -m py_compile gate_d_d3e_a0.py gate_d_d3e_a0_hashdiag.py
+          grep -q 'reference_and_causal_pass_despite_full_state_hash' gate_d_d3e_a0_hashdiag.py
+          grep -q 'd3e_arms_run.*False' gate_d_d3e_a0_hashdiag.py
+      - name: Run hash diagnostic
+        working-directory: snn_transform_r6
+        run: |
+          set -euo pipefail
+          python gate_d_d3e_a0_hashdiag.py \
+            --data run_gate_d3e_a0_hashdiag/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
+            --effectiveness prior_effectiveness \
+            --out run_gate_d3e_a0_hashdiag/result \
+            --threads 4 \
+            | tee run_gate_d3e_a0_hashdiag/console.log
+      - name: Show compact result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          f=pathlib.Path('run_gate_d3e_a0_hashdiag/result/D3E_A0_HASH_DIAGNOSTIC.json')
+          if f.exists():
+              d=json.load(open(f))
+              print(json.dumps({
+                'shared_provenance_pass':d.get('shared_provenance_pass'),
+                'expected_terminal_hash':d.get('frozen_expected_terminal_hash'),
+                'hash_variants':d.get('hash_variants'),
+                'matching':d.get('variant_matching_frozen_expected'),
+                'reference_trace_gate':d.get('reference_trace_gate'),
+                'causal_replay_gates':d.get('causal_replay_gates'),
+                'effects':d.get('reconstructed_effects'),
+                'effect_abs_diff':d.get('effect_abs_diff'),
+                'reference_and_causal_pass':d.get('reference_and_causal_pass_despite_full_state_hash'),
+              },indent=2))
+          else:
+              print('D3E_A0_HASH_DIAGNOSTIC.json not produced')
+          PY
+      - name: Upload diagnostic artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D3E_A0_HASH_DIAGNOSTIC
+          path: |
+            snn_transform_r6/run_gate_d3e_a0_hashdiag/result/
+            snn_transform_r6/run_gate_d3e_a0_hashdiag/console.log
+          if-no-files-found: warn
+          retention-days: 30
