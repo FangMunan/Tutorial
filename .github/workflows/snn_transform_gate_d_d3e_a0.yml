@@ -1,4 +1,4 @@
-name: SNN Transform Gate D3E A0 provenance recovery
+name: SNN Transform Gate D3E-A0 Gate-A provenance recovery
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
   actions: read
 
 jobs:
-  d3e-a0-provenance:
+  d3e-a0:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -31,21 +31,21 @@ jobs:
         with:
           name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
           path: snn_transform_r6/frozen_r6b1
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           run-id: 39139040624
       - name: Download exact R6B3 two-epoch checkpoint
         uses: actions/download-artifact@v4
         with:
           name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
           path: snn_transform_r6/prior_g2
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           run-id: 39170815102
-      - name: Download authoritative historical effectiveness artifact
+      - name: Download exact historical R6B4 effectiveness artifact
         uses: actions/download-artifact@v4
         with:
           name: SNN_TRANSFORM_R6B4_FULL_FORWARD_EFFECTIVENESS_TEST
-          path: snn_transform_r6/historical_effectiveness
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: snn_transform_r6/prior_effectiveness
+          github-token: ${{ github.token }}
           run-id: 39230496177
       - name: Download MNIST
         working-directory: snn_transform_r6
@@ -59,56 +59,50 @@ jobs:
           PY
       - name: Static audit
         working-directory: snn_transform_r6
-        shell: bash
         run: |
           set -euo pipefail
           python -m py_compile gate_d_d3e_a0.py
-          grep -q "9917311" gate_d_d3e_a0.py
-          grep -q "9917312" gate_d_d3e_a0.py
-          grep -q "39230496177" gate_d_d3e_a0.py
-          grep -q "causal_trace_sample_equality_required.*False" gate_d_d3e_a0.py
-          test -f historical_effectiveness/result/r6b3_frozen_new_params_r3_t8_traces.json
-      - name: Run D3E-A0 provenance smoke test
+          grep -q 'UNIFORM_SEED = 9917311' gate_d_d3e_a0.py
+          grep -q 'SELECTION_SEED = 11553' gate_d_d3e_a0.py
+          grep -q '5b69d8fa4a8b1fef2939230014d002731bf4814aa55bfc542eee9edcddc20dd1' gate_d_d3e_a0.py
+          grep -q 'Do not require causal replay sampled IDs' gate_d_d3e_a0.py
+      - name: Run D3E-A0 only
         working-directory: snn_transform_r6
-        shell: bash
         run: |
           set -euo pipefail
           python gate_d_d3e_a0.py \
             --data run_gate_d3e_a0/mnist.npz \
             --tokenizer frozen_r6b1/result/tokenizer.pt \
             --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
-            --historical-traces historical_effectiveness/result/r6b3_frozen_new_params_r3_t8_traces.json \
+            --effectiveness prior_effectiveness \
             --out run_gate_d3e_a0/result \
-            --contexts 1024 --seed 7311 --threads 4 \
+            --threads 4 \
             | tee run_gate_d3e_a0/console.log
-      - name: Show compact A0 result
+      - name: Show result
         if: always()
         working-directory: snn_transform_r6
         run: |
           python - <<'PY'
           import json, pathlib
-          f=pathlib.Path('run_gate_d3e_a0/result/D3E_A0_PROVENANCE_REPORT.json')
-          if not f.exists():
-              print('D3E_A0_PROVENANCE_REPORT.json not produced')
-          else:
+          f=pathlib.Path('run_gate_d3e_a0/result/D3E_A0_PROVENANCE.json')
+          if f.exists():
               d=json.load(open(f))
               print(json.dumps({
-                  'all_pass':d.get('all_pass'),
-                  'A0_1':d.get('A0_1_shared_input_provenance',{}).get('pass'),
-                  'A0_2':d.get('A0_2_terminal_r6b3_state',{}).get('pass'),
-                  'terminal_hash':d.get('A0_2_terminal_r6b3_state',{}).get('observed_ndarray_state_sha256'),
-                  'A0_3':d.get('A0_3_historical_schedule',{}).get('pass'),
-                  'A0_4':d.get('A0_4_reference_predictor_reconstruction',{}),
-                  'A0_5_pass':d.get('A0_5_causal_gate_a_replay',{}).get('pass'),
-                  'A0_5_effects':d.get('A0_5_causal_gate_a_replay',{}).get('effects'),
-                  'A0_5_abs_diff':d.get('A0_5_causal_gate_a_replay',{}).get('abs_diff'),
-              },indent=2))
+                  'pass': d.get('pass'),
+                  'provenance': d.get('provenance'),
+                  'terminal_state': d.get('terminal_state'),
+                  'reference_trace_gate': d.get('reference_trace_gate'),
+                  'reconstructed_effects': d.get('reconstructed_effects'),
+                  'abs_diff': d.get('abs_diff'),
+              }, indent=2))
+          else:
+              print('D3E_A0_PROVENANCE.json not produced')
           PY
       - name: Upload D3E-A0 artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SNN_TRANSFORM_GATE_D3E_A0_PROVENANCE_RECOVERY
+          name: SNN_TRANSFORM_GATE_D3E_A0_PROVENANCE
           path: |
             snn_transform_r6/run_gate_d3e_a0/result/
             snn_transform_r6/run_gate_d3e_a0/console.log
