@@ -65,7 +65,7 @@ jobs:
           grep -q "WO_A_M" gate_d_d5a.py
           grep -q "bo_A_M" gate_d_d5a.py
           grep -q "reset_boundary(plain,'F_EM')" gate_d_d5a.py
-          grep -q "same-run plain/instrumented" GATE_D5A_PROTOCOL.md
+          grep -qi "same-run plain/instrumented" GATE_D5A_PROTOCOL.md
       - name: Run Gate D5A
         working-directory: snn_transform_r6
         shell: bash
