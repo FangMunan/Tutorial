@@ -1,0 +1,134 @@
+name: SNN Transform Gate D3 temporal credit-memory audit
+
+on:
+  push:
+    branches:
+      - gate-d-plasticity-spectrum-audit
+    paths:
+      - 'snn_transform_r6/gate_d_d3.py'
+      - 'snn_transform_r6/GATE_D3_README.md'
+      - '.github/workflows/snn_transform_gate_d_d3.yml'
+  workflow_dispatch:
+    inputs:
+      contexts:
+        description: Native T0 contexts
+        required: true
+        default: '1024'
+      probe_contexts:
+        description: Cloned-state D3B/C/D probe contexts
+        required: true
+        default: '64'
+      order_permutations:
+        description: Deterministic random target-order permutations per probe
+        required: true
+        default: '8'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  d3-temporal-credit-memory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+      - name: Download exact R6B3 two-epoch checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
+          path: snn_transform_r6/prior_g2
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39170815102
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_gate_d3
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_gate_d3/mnist.npz')
+          PY
+      - name: Static audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile gate_d_d3.py gate_d_plasticity_audit.py gate_d_d15_d16.py
+          grep -q "D3_PARITY" gate_d_d3.py
+          grep -q "no_M_within" gate_d_d3.py
+          grep -q "future_oracles" gate_d_d3.py
+          grep -q "gradient_oracle_enters_candidate_learning.*False" gate_d_d3.py
+          grep -q "counterfactual_replay_enters_candidate_learning.*False" gate_d_d3.py
+      - name: Run Gate D3
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          CTX='1024'
+          PROBE='64'
+          ORDER='8'
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            CTX='${{ inputs.contexts }}'
+            PROBE='${{ inputs.probe_contexts }}'
+            ORDER='${{ inputs.order_permutations }}'
+          fi
+          python gate_d_d3.py \
+            --data run_gate_d3/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
+            --out run_gate_d3/result \
+            --contexts "$CTX" \
+            --probe-contexts "$PROBE" \
+            --order-permutations "$ORDER" \
+            --seed 7311 --threads 4 \
+            | tee run_gate_d3/console.log
+      - name: Show compact result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          p=pathlib.Path('run_gate_d3/result')
+          for name in ('D3_PARITY.json','D3A_TEMPORAL_KERNEL.json','D3B_ORDER_SUMMARY.json','D3C_PERSISTENCE_SUMMARY.json','D3D_HORIZON_SUMMARY.json','D3_MANIFEST.json'):
+              f=p/name
+              if not f.exists(): continue
+              d=json.load(open(f)); print('\n###',name)
+              if name=='D3_PARITY.json':
+                  print(json.dumps({'pass':d.get('pass'),'checkpoints':{k:v.get('pass') for k,v in d.get('checkpoints',{}).items()},'W2_replay_max':d.get('W2_direct_replay_max_abs'),'oracle_rebuild_max':d.get('oracle_reconstruction_max_abs')},indent=2))
+              elif name=='D3A_TEMPORAL_KERNEL.json':
+                  print(json.dumps({'C_ug':{k:v['C_ug'].get('mean') for k,v in d.get('lags',{}).items()},'FIR':d.get('descriptive_FIR')},indent=2))
+              elif name=='D3B_ORDER_SUMMARY.json':
+                  print(json.dumps({'V_order':d.get('V_order'),'alignment_gain':d.get('alignment_gain_mean_order_minus_native')},indent=2))
+              elif name=='D3C_PERSISTENCE_SUMMARY.json':
+                  print(json.dumps({'paired_vs_native':d.get('paired_vs_native')},indent=2))
+              elif name=='D3D_HORIZON_SUMMARY.json':
+                  print(json.dumps({'horizons':d.get('horizons')},indent=2))
+              else:
+                  print(json.dumps({k:d.get(k) for k in ('contexts','probe_contexts','order_random_permutations_per_probe','D3_parity_pass')},indent=2))
+          PY
+      - name: Upload Gate D3 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D3_TEMPORAL_CREDIT_MEMORY
+          path: |
+            snn_transform_r6/run_gate_d3/result/
+            snn_transform_r6/run_gate_d3/console.log
+          if-no-files-found: warn
+          retention-days: 30
