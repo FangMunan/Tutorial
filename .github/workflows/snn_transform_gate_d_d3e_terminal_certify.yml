@@ -1,0 +1,106 @@
+name: SNN Transform Gate D3E historical terminal certification
+
+on:
+  push:
+    branches:
+      - gate-d-plasticity-spectrum-audit
+    paths:
+      - 'snn_transform_r6/gate_d_d3e_terminal_certify.py'
+      - '.github/workflows/snn_transform_gate_d_d3e_terminal_certify.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  terminal-certification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+      - name: Download exact R6B3 two-epoch checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
+          path: snn_transform_r6/prior_g2
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39170815102
+      - name: Download historical effectiveness artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B4_FULL_FORWARD_EFFECTIVENESS_TEST
+          path: snn_transform_r6/prior_effectiveness
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39230496177
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_d3e_terminal_cert
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_d3e_terminal_cert/mnist.npz')
+          PY
+      - name: Static audit
+        working-directory: snn_transform_r6
+        run: |
+          set -euo pipefail
+          python -m py_compile gate_d_d3e_terminal_certify.py gate_d_d3e_a0.py
+          grep -q '2631db2880077b5dea1fef806fc785685f5063c23ab01cbbe4153219e460f565' gate_d_d3e_terminal_certify.py
+          grep -q '5b69d8fa4a8b1fef2939230014d002731bf4814aa55bfc542eee9edcddc20dd1' gate_d_d3e_a0.py
+      - name: Certify historical terminal comparator
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python gate_d_d3e_terminal_certify.py \
+            --data run_d3e_terminal_cert/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
+            --effectiveness prior_effectiveness \
+            --out run_d3e_terminal_cert/result \
+            --threads 4 \
+            | tee run_d3e_terminal_cert/console.log
+      - name: Show certification
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          f=pathlib.Path('run_d3e_terminal_cert/result/D3E_HISTORICAL_TERMINAL_CERTIFICATION.json')
+          if f.exists():
+              d=json.load(open(f))
+              print(json.dumps({k:d.get(k) for k in [
+                  'P0_shared_provenance_exact','P1_ndarray_state_exact',
+                  'P1_historical_file_sha_exact','historical_pickle_sha256',
+                  'P2_reference_predictor_pass','P3_historical_gateA_effects_pass',
+                  'certified_exact_historical_pickle','certified_state_equivalent_comparator']},indent=2))
+          else:
+              print('certification report not produced')
+          PY
+      - name: Upload certified historical terminal comparator
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_D3E_HISTORICAL_R6B3_PLUS1024_COMPARATOR
+          path: |
+            snn_transform_r6/run_d3e_terminal_cert/result/
+            snn_transform_r6/run_d3e_terminal_cert/console.log
+          if-no-files-found: warn
+          retention-days: 90
