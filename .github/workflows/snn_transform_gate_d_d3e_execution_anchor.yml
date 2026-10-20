@@ -1,0 +1,109 @@
+name: SNN Transform Gate D3E R6B4-native execution anchor
+
+on:
+  push:
+    branches:
+      - gate-d-plasticity-spectrum-audit
+    paths:
+      - '.github/workflows/snn_transform_gate_d_d3e_execution_anchor.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  freeze-execution-anchor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+      - name: Download exact R6B3 two-epoch checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
+          path: snn_transform_r6/prior_g2
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39170815102
+      - name: Download historical R6B4 effectiveness artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B4_FULL_FORWARD_EFFECTIVENESS_TEST
+          path: snn_transform_r6/prior_effectiveness
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39230496177
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_d3e_execution_anchor
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_d3e_execution_anchor/mnist.npz')
+          PY
+      - name: Static audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile gate_d_d3e_execution_anchor.py gate_d_d3e.py gate_d_d3e_a0.py
+          grep -q '4a42e60ada31f6ec5167cafd2bd860dd8ca937f7970665c5b95bf8fb2dfc89d0' gate_d_d3e_execution_anchor.py
+          grep -q '1150e17b370771fe5227012703663b920c1bea01cbedb4df0ab6588deafc7402' gate_d_d3e_execution_anchor.py
+          grep -q 'not_historical_gateA_R6B4_reference' gate_d_d3e_execution_anchor.py
+      - name: Freeze validated R6B4-native execution anchor
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python gate_d_d3e_execution_anchor.py \
+            --data run_d3e_execution_anchor/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
+            --effectiveness prior_effectiveness \
+            --out run_d3e_execution_anchor/result \
+            --seed 7311 --threads 4 \
+            | tee run_d3e_execution_anchor/console.log
+      - name: Show compact anchor report
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          f=pathlib.Path('run_d3e_execution_anchor/result/D3E_R6B4_NATIVE_EXECUTION_ANCHOR.json')
+          if f.exists():
+              d=json.load(open(f))
+              keys=['P0_shared_provenance_exact','P1_exact_2epoch_checkpoint_identity',
+                    'P2_historical_R6B3_reference_predictor_parity',
+                    'P3_historical_R6B3_GateA_causal_parity',
+                    'A4_historical_R6B4_effectiveness_semantic_identity',
+                    'all_freeze_gates_pass','schedule_sha256','anchor_npz_sha256',
+                    'r6b4_native_gateA_aggregate_means','historical_R6B4_effectiveness_abs_diff']
+              print(json.dumps({k:d.get(k) for k in keys},indent=2))
+          else:
+              print('anchor report not produced')
+          PY
+      - name: Upload frozen execution anchor
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_D3E_R6B4_NATIVE_EXECUTION_ANCHOR
+          path: |
+            snn_transform_r6/run_d3e_execution_anchor/result/
+            snn_transform_r6/run_d3e_execution_anchor/console.log
+          if-no-files-found: error
+          retention-days: 90
