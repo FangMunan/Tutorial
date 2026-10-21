@@ -1,0 +1,135 @@
+name: SNN Transform Gate D5C self-conditioning gradient gap
+
+on:
+  push:
+    branches:
+      - gate-d-plasticity-spectrum-audit
+    paths:
+      - 'snn_transform_r6/gate_d_d5c.py'
+      - 'snn_transform_r6/GATE_D5C_PROTOCOL.md'
+      - '.github/workflows/snn_transform_gate_d_d5c.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  d5c-gradient-gap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+      - name: Download successful D5A artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D5A_PATHWAY_LOCAL_CREDIT_DIVERGENCE
+          path: snn_transform_r6/d5a_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39505406348
+      - name: Download successful D5B artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D5B_LOCAL_DESCENT_ROLLOUT_UTILITY
+          path: snn_transform_r6/d5b_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39570284981
+      - name: Download frozen D3E execution anchor
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_D3E_R6B4_NATIVE_EXECUTION_ANCHOR
+          path: snn_transform_r6/d3e_anchor
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39450940230
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_gate_d5c
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_gate_d5c/mnist.npz')
+          PY
+      - name: Static audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile gate_d_d5c.py gate_d_d5b.py gate_d_d5a.py gate_d_d3e_eval.py
+          grep -q "PATHS=('W2','WO','bo')" gate_d_d5c.py
+          grep -q "ALPHAS=(0.25,0.5,1.0)" gate_d_d5c.py
+          grep -q "PRIMARY_FROZEN_ALPHA=0.25" gate_d_d5c.py
+          grep -q "PRIMARY_FULL_ALPHA=1.0" gate_d_d5c.py
+          grep -q "C1_SELF_CONDITIONING_MISMATCH_CONFIRMED" gate_d_d5c.py
+          grep -q "C3_DISCRETE_BRANCH_AMPLIFICATION" gate_d_d5c.py
+          grep -q "learner_modified':False" gate_d_d5c.py
+          grep -q "held-out gradient batch" GATE_D5C_PROTOCOL.md
+          grep -q "frozen-branch" GATE_D5C_PROTOCOL.md
+          grep -q "full-CRN" GATE_D5C_PROTOCOL.md
+          test -f d5a_source/result/D5A_F_EM_CONTEXT_ROWS.csv
+          test -f d5b_source/result/D5B_SUMMARY.json
+          test -f d5b_source/result/D5B_F_native_terminal.pkl
+          test -f d5b_source/result/D5B_EFFECT_ARRAYS.npz
+          test -f d3e_anchor/result/R6B4_NATIVE_GATE_A_EXECUTION_ANCHOR.npz
+          test -f d3e_anchor/result/HISTORICAL_R6B3_R3_T8_REFERENCE_TRACE.json
+      - name: Run Gate D5C
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p run_gate_d5c/result
+          python gate_d_d5c.py \
+            --data run_gate_d5c/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --d5b-artifact d5b_source \
+            --d5a-artifact d5a_source \
+            --anchor-artifact d3e_anchor \
+            --out run_gate_d5c/result \
+            --encode-batch 256 --bootstrap 10000 --seed 7311 --threads 4 \
+            | tee run_gate_d5c/console.log
+      - name: Show compact D5C result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          f=pathlib.Path('run_gate_d5c/result/D5C_SUMMARY.json')
+          if not f.exists():
+              print('D5C_SUMMARY.json not produced')
+          else:
+              d=json.load(open(f))
+              print(json.dumps({
+                  'classification':d.get('classification'),
+                  'base_calibration':d.get('base_D5B_calibration',{}).get('pass'),
+                  'gradient_batch_disjoint':d.get('gradient_batch_disjoint_from_gateA'),
+                  'direction_valid':{k:v.get('primary_direction_valid') for k,v in d.get('direction_audit',{}).get('paths',{}).items()},
+                  'decision':d.get('decision'),
+                  'WO_frozen_primary':d.get('results',{}).get('frozen',{}).get('WO',{}).get('0.25'),
+                  'WO_full_primary':d.get('results',{}).get('full_crn',{}).get('WO',{}).get('1.0'),
+              },indent=2))
+          PY
+      - name: Upload Gate D5C artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D5C_SELF_CONDITIONING_GRADIENT_GAP
+          path: |
+            snn_transform_r6/run_gate_d5c/result/
+            snn_transform_r6/run_gate_d5c/console.log
+          if-no-files-found: warn
+          retention-days: 30
