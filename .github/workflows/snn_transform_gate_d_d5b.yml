@@ -1,0 +1,149 @@
+name: SNN Transform Gate D5B local-descent versus rollout utility
+
+on:
+  push:
+    branches:
+      - gate-d-plasticity-spectrum-audit
+    paths:
+      - 'snn_transform_r6/gate_d_d5b.py'
+      - 'snn_transform_r6/GATE_D5B_PROTOCOL.md'
+      - '.github/workflows/snn_transform_gate_d_d5b.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  d5b-local-descent-rollout:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+      - name: Download exact R6B3 two-epoch checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
+          path: snn_transform_r6/prior_g2
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39170815102
+      - name: Download successful D5A artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D5A_PATHWAY_LOCAL_CREDIT_DIVERGENCE
+          path: snn_transform_r6/d5a_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39505406348
+      - name: Download provenance-correct D3E terminal artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D3E_FULL_TRAJECTORY_BOUNDARY_INTERVENTION
+          path: snn_transform_r6/d3e_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39454173518
+      - name: Download frozen D3E execution anchor
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_D3E_R6B4_NATIVE_EXECUTION_ANCHOR
+          path: snn_transform_r6/d3e_anchor
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39450940230
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_gate_d5b
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_gate_d5b/mnist.npz')
+          PY
+      - name: Static audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile gate_d_d5b.py gate_d_d5a.py gate_d_d3e_eval.py gate_d_d3e_runtime.py r6b4_full_forward_plasticity.py
+          grep -q "F_WO_oracle" gate_d_d5b.py
+          grep -q "F_bo_oracle" gate_d_d5b.py
+          grep -q "F_O_oracle" gate_d_d5b.py
+          grep -q "F_O_zero" gate_d_d5b.py
+          grep -q "LOCAL_DESCENT_FRACTION_GATE=0.95" gate_d_d5b.py
+          grep -q "arm-specific native proposal" GATE_D5B_PROTOCOL.md
+          grep -q "component-wise norm matching" GATE_D5B_PROTOCOL.md
+          grep -q "common-background" GATE_D5B_PROTOCOL.md
+          grep -q "L1_STRONG_LOCAL_OBJECTIVE_DEPLOYMENT_MISMATCH" gate_d_d5b.py
+          test -f d5a_source/result/D5A_SUMMARY.json
+          test -f d3e_source/result/D3E_N_terminal.pkl
+          test -f d3e_source/result/D3E_F_EM_terminal.pkl
+          test -f d3e_source/result/D3E_EFFECT_ARRAYS.npz
+          test -f d3e_anchor/result/R6B4_NATIVE_GATE_A_EXECUTION_ANCHOR.npz
+          test -f d3e_anchor/result/HISTORICAL_R6B3_R3_T8_REFERENCE_TRACE.json
+      - name: Run Gate D5B
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p run_gate_d5b/result
+          python gate_d_d5b.py \
+            --data run_gate_d5b/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
+            --d5a-artifact d5a_source \
+            --d3e-artifact d3e_source \
+            --anchor-artifact d3e_anchor \
+            --out run_gate_d5b/result \
+            --contexts 1024 --eval-images 256 --gen-samples 256 \
+            --encode-batch 256 --bootstrap 10000 --seed 7311 --threads 4 \
+            | tee run_gate_d5b/console.log
+      - name: Show compact D5B result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          f=pathlib.Path('run_gate_d5b/result/D5B_SUMMARY.json')
+          if not f.exists():
+              print('D5B_SUMMARY.json not produced')
+          else:
+              d=json.load(open(f))
+              print(json.dumps({
+                  'classification':d.get('classification'),
+                  'parity':d.get('F_native_same_run_plain_instrumented_parity',{}).get('pass'),
+                  'F_native_D3E_calibration':d.get('F_native_vs_frozen_D3E_F_EM_GateA_calibration',{}).get('pass'),
+                  'decision_flags':d.get('decision_flags'),
+                  'local_joint_oracle':d.get('local_objective',{}).get('F_O_oracle'),
+                  'primary_joint_oracle_deployment':{
+                      k:v for k,v in d.get('deployment',{}).get('F_O_oracle',{}).items()
+                      if k in ('F61','D_non61')
+                  },
+                  'primary_common_background':{
+                      bg:{m:dd.get('Ooracle',{}).get(m) for m in ('F61','D_non61')}
+                      for bg,dd in d.get('common_background_terminal_utility',{}).items()
+                  },
+              },indent=2))
+          PY
+      - name: Upload Gate D5B artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D5B_LOCAL_DESCENT_ROLLOUT_UTILITY
+          path: |
+            snn_transform_r6/run_gate_d5b/result/
+            snn_transform_r6/run_gate_d5b/console.log
+          if-no-files-found: warn
+          retention-days: 30
