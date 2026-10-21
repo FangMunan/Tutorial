@@ -1,0 +1,138 @@
+name: SNN Transform Gate D5D exact-WO trajectory emergence
+
+on:
+  push:
+    branches:
+      - gate-d-plasticity-spectrum-audit
+    paths:
+      - 'snn_transform_r6/gate_d_d5d.py'
+      - 'snn_transform_r6/GATE_D5D_PROTOCOL.md'
+      - '.github/workflows/snn_transform_gate_d_d5d.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  d5d-trajectory-emergence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 480
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+      - name: Download exact R6B3 two-epoch checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
+          path: snn_transform_r6/prior_g2
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39170815102
+      - name: Download successful D5B artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D5B_LOCAL_DESCENT_ROLLOUT_UTILITY
+          path: snn_transform_r6/d5b_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39570284981
+      - name: Download successful D5C artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D5C_SELF_CONDITIONING_GRADIENT_GAP
+          path: snn_transform_r6/d5c_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39597941545
+      - name: Download frozen D3E execution anchor
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_D3E_R6B4_NATIVE_EXECUTION_ANCHOR
+          path: snn_transform_r6/d3e_anchor
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39450940230
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_gate_d5d
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_gate_d5d/mnist.npz')
+          PY
+      - name: Static audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile gate_d_d5d.py gate_d_d5c.py gate_d_d5b.py gate_d_d3e_eval.py
+          grep -q "CHECKPOINTS=(0,64,128,256,512,768,1024)" gate_d_d5d.py
+          grep -q "D1_SMOOTH_CUMULATIVE_DISPLACEMENT" gate_d_d5d.py
+          grep -q "D2_ROTATION_PATH_DEPENDENCE_SUPPORTED" gate_d_d5d.py
+          grep -q "D3_THRESHOLD_LIKE_TRANSITION" gate_d_d5d.py
+          grep -q "learner_modified':False" gate_d_d5d.py
+          grep -q "fixed-probe gradient-field rotation" GATE_D5D_PROTOCOL.md
+          grep -q "Straight chord control" GATE_D5D_PROTOCOL.md
+          test -f d5b_source/result/D5B_SUMMARY.json
+          test -f d5b_source/result/D5B_EFFECT_ARRAYS.npz
+          test -f d5c_source/result/D5C_SUMMARY.json
+          test -f prior_g2/result/checkpoint_2p0000epoch.pkl
+          test -f d3e_anchor/result/R6B4_NATIVE_GATE_A_EXECUTION_ANCHOR.npz
+          test -f d3e_anchor/result/HISTORICAL_R6B3_R3_T8_REFERENCE_TRACE.json
+      - name: Run Gate D5D
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p run_gate_d5d/result
+          python gate_d_d5d.py \
+            --data run_gate_d5d/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
+            --d5b-artifact d5b_source \
+            --d5c-artifact d5c_source \
+            --anchor-artifact d3e_anchor \
+            --out run_gate_d5d/result \
+            --eval-images 256 --gen-samples 256 --encode-batch 256 \
+            --bootstrap 10000 --seed 7311 --threads 4 \
+            | tee run_gate_d5d/console.log
+      - name: Show compact D5D result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          f=pathlib.Path('run_gate_d5d/result/D5D_SUMMARY.json')
+          if not f.exists():
+              print('D5D_SUMMARY.json not produced')
+          else:
+              d=json.load(open(f))
+              print(json.dumps({
+                  'classification':d.get('classification'),
+                  'terminal_calibration':d.get('D5B_terminal_calibration'),
+                  'onset':d.get('onset'),
+                  'decision':d.get('decision'),
+              },indent=2))
+          PY
+      - name: Upload Gate D5D artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D5D_EXACT_WO_TRAJECTORY_EMERGENCE
+          path: |
+            snn_transform_r6/run_gate_d5d/result/
+            snn_transform_r6/run_gate_d5d/console.log
+          if-no-files-found: warn
+          retention-days: 30
