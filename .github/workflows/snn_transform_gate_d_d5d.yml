@@ -18,6 +18,8 @@ jobs:
   d5d-trajectory-emergence:
     runs-on: ubuntu-24.04
     timeout-minutes: 480
+    env:
+      PYTHONPATH: ${{ github.workspace }}/snn_transform_p3_image:${{ github.workspace }}/snn_transform_r6
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -78,6 +80,11 @@ jobs:
         run: |
           set -euo pipefail
           python -m py_compile gate_d_d5d.py gate_d_d5c.py gate_d_d5b.py gate_d_d3e_eval.py
+          python - <<'PY'
+          import p3i_cb_exact_msdl
+          import gate_d_d5d
+          print('D5D_IMPORT_SMOKE_PASS')
+          PY
           grep -q "CHECKPOINTS=(0,64,128,256,512,768,1024)" gate_d_d5d.py
           grep -q "D1_SMOOTH_CUMULATIVE_DISPLACEMENT" gate_d_d5d.py
           grep -q "D2_ROTATION_PATH_DEPENDENCE_SUPPORTED" gate_d_d5d.py
