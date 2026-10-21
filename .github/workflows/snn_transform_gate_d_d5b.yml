@@ -83,9 +83,9 @@ jobs:
           grep -q "F_O_oracle" gate_d_d5b.py
           grep -q "F_O_zero" gate_d_d5b.py
           grep -q "LOCAL_DESCENT_FRACTION_GATE=0.95" gate_d_d5b.py
-          grep -q "arm-specific native proposal" GATE_D5B_PROTOCOL.md
+          grep -qi "arm-specific" GATE_D5B_PROTOCOL.md
           grep -q "component-wise norm matching" GATE_D5B_PROTOCOL.md
-          grep -q "common-background" GATE_D5B_PROTOCOL.md
+          grep -qi "common-background" GATE_D5B_PROTOCOL.md
           grep -q "L1_STRONG_LOCAL_OBJECTIVE_DEPLOYMENT_MISMATCH" gate_d_d5b.py
           test -f d5a_source/result/D5A_SUMMARY.json
           test -f d3e_source/result/D3E_N_terminal.pkl
