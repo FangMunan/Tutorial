@@ -1,0 +1,165 @@
+name: SNN Transform Gate D6A pathway-specific repair sufficiency
+
+on:
+  push:
+    branches:
+      - gate-d-plasticity-spectrum-audit
+    paths:
+      - 'snn_transform_r6/gate_d_d6a.py'
+      - 'snn_transform_r6/GATE_D6A_PROTOCOL.md'
+      - '.github/workflows/snn_transform_gate_d_d6a.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  d6a-pathway-repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 480
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+      - name: Download exact R6B3 two-epoch checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
+          path: snn_transform_r6/prior_g2
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39170815102
+      - name: Download successful D5A artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D5A_PATHWAY_LOCAL_CREDIT_DIVERGENCE
+          path: snn_transform_r6/d5a_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39505406348
+      - name: Download successful D5B artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D5B_LOCAL_DESCENT_ROLLOUT_UTILITY
+          path: snn_transform_r6/d5b_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39570284981
+      - name: Download successful D5D artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D5D_EXACT_WO_TRAJECTORY_EMERGENCE
+          path: snn_transform_r6/d5d_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39641577692
+      - name: Download provenance-correct D3E artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D3E_FULL_TRAJECTORY_BOUNDARY_INTERVENTION
+          path: snn_transform_r6/d3e_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39454173518
+      - name: Download frozen D3E execution anchor
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_D3E_R6B4_NATIVE_EXECUTION_ANCHOR
+          path: snn_transform_r6/d3e_anchor
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39450940230
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_gate_d6a
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_gate_d6a/mnist.npz')
+          PY
+      - name: Static audit
+        working-directory: snn_transform_r6
+        shell: bash
+        env:
+          PYTHONPATH: ../snn_transform_p3_image:.
+        run: |
+          set -euo pipefail
+          python -m py_compile gate_d_d6a.py gate_d_d5b.py gate_d_d5a.py gate_d_d3e_runtime.py r6b4_full_forward_plasticity.py
+          python - <<'PY'
+          import p3i_cb_exact_msdl, gate_d_d6a
+          print('D6A import smoke PASS')
+          PY
+          grep -q "F_EM_WO_zero" gate_d_d6a.py
+          grep -q "F_EM_bo_oracle" gate_d_d6a.py
+          grep -q "F_EM_WO_zero_bo_oracle" gate_d_d6a.py
+          grep -q "R1_STRONG_PATHWAY_SPECIFIC_REPAIR_SUFFICIENCY" gate_d_d6a.py
+          grep -q "WO parameter update is not applied" GATE_D6A_PROTOCOL.md
+          grep -q "upper-bound diagnostic" GATE_D6A_PROTOCOL.md
+          test -f d5a_source/result/D5A_SUMMARY.json
+          test -f d5b_source/result/D5B_SUMMARY.json
+          test -f d5d_source/result/D5D_SUMMARY.json
+          test -f d3e_source/result/D3E_SUMMARY.json
+          test -f d3e_source/result/D3E_EFFECT_ARRAYS.npz
+          test -f d3e_source/result/D3E_N_terminal.pkl
+          test -f d3e_source/result/D3E_F_EM_terminal.pkl
+          test -f d3e_anchor/result/R6B4_NATIVE_GATE_A_EXECUTION_ANCHOR.npz
+          test -f d3e_anchor/result/HISTORICAL_R6B3_R3_T8_REFERENCE_TRACE.json
+      - name: Run Gate D6A
+        working-directory: snn_transform_r6
+        shell: bash
+        env:
+          PYTHONPATH: ../snn_transform_p3_image:.
+        run: |
+          set -euo pipefail
+          mkdir -p run_gate_d6a/result
+          python gate_d_d6a.py \
+            --data run_gate_d6a/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
+            --d5a-artifact d5a_source \
+            --d5b-artifact d5b_source \
+            --d5d-artifact d5d_source \
+            --d3e-artifact d3e_source \
+            --anchor-artifact d3e_anchor \
+            --out run_gate_d6a/result \
+            --contexts 1024 --eval-images 256 --gen-samples 256 \
+            --encode-batch 256 --bootstrap 10000 --seed 7311 --threads 4 \
+            | tee run_gate_d6a/console.log
+      - name: Show compact D6A result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          f=pathlib.Path('run_gate_d6a/result/D6A_SUMMARY.json')
+          if not f.exists():
+              print('D6A_SUMMARY.json not produced')
+          else:
+              d=json.load(open(f))
+              print(json.dumps({
+                  'classification':d.get('classification'),
+                  'decision':d.get('decision'),
+                  'combined_vs_N':d.get('deployment_contrasts',{}).get('F_EM_WO_zero_bo_oracle',{}).get('N'),
+                  'combined_vs_F_EM':d.get('deployment_contrasts',{}).get('F_EM_WO_zero_bo_oracle',{}).get('F_EM'),
+                  'guardrails':d.get('guardrails'),
+              },indent=2))
+          PY
+      - name: Upload Gate D6A artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D6A_PATHWAY_SPECIFIC_REPAIR
+          path: |
+            snn_transform_r6/run_gate_d6a/result/
+            snn_transform_r6/run_gate_d6a/console.log
+          if-no-files-found: warn
+          retention-days: 30
