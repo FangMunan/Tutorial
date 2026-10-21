@@ -6,6 +6,7 @@ on:
       - gate-d-plasticity-spectrum-audit
     paths:
       - 'snn_transform_r6/gate_d_d6a.py'
+      - 'snn_transform_r6/gate_d_d6a_terminal_fix.py'
       - 'snn_transform_r6/GATE_D6A_PROTOCOL.md'
       - '.github/workflows/snn_transform_gate_d_d6a.yml'
   workflow_dispatch:
@@ -93,15 +94,16 @@ jobs:
           PYTHONPATH: ../snn_transform_p3_image:.
         run: |
           set -euo pipefail
-          python -m py_compile gate_d_d6a.py gate_d_d5b.py gate_d_d5a.py gate_d_d3e_runtime.py r6b4_full_forward_plasticity.py
+          python -m py_compile gate_d_d6a.py gate_d_d6a_terminal_fix.py gate_d_d5b.py gate_d_d5a.py gate_d_d3e_runtime.py r6b4_full_forward_plasticity.py
           python - <<'PY'
-          import p3i_cb_exact_msdl, gate_d_d6a
+          import p3i_cb_exact_msdl, gate_d_d6a, gate_d_d6a_terminal_fix
           print('D6A import smoke PASS')
           PY
           grep -q "F_EM_WO_zero" gate_d_d6a.py
           grep -q "F_EM_bo_oracle" gate_d_d6a.py
           grep -q "F_EM_WO_zero_bo_oracle" gate_d_d6a.py
           grep -q "R1_STRONG_PATHWAY_SPECIFIC_REPAIR_SUFFICIENCY" gate_d_d6a.py
+          grep -q "_native_field_template" gate_d_d6a_terminal_fix.py
           grep -q "WO parameter update is not applied" GATE_D6A_PROTOCOL.md
           grep -q "upper-bound diagnostic" GATE_D6A_PROTOCOL.md
           test -f d5a_source/result/D5A_SUMMARY.json
@@ -121,7 +123,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p run_gate_d6a/result
-          python gate_d_d6a.py \
+          python gate_d_d6a_terminal_fix.py \
             --data run_gate_d6a/mnist.npz \
             --tokenizer frozen_r6b1/result/tokenizer.pt \
             --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
