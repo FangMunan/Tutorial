@@ -6,6 +6,7 @@ on:
       - gate-d-plasticity-spectrum-audit
     paths:
       - 'snn_transform_r6/gate_d_d5c.py'
+      - 'snn_transform_r6/gate_d_d5c_pickle_fix.py'
       - 'snn_transform_r6/GATE_D5C_PROTOCOL.md'
       - '.github/workflows/snn_transform_gate_d_d5c.yml'
   workflow_dispatch:
@@ -70,7 +71,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m py_compile gate_d_d5c.py gate_d_d5b.py gate_d_d5a.py gate_d_d3e_eval.py
+          python -m py_compile gate_d_d5c.py gate_d_d5c_pickle_fix.py gate_d_d5b.py gate_d_d5a.py gate_d_d3e_eval.py
           grep -q "PATHS=('W2','WO','bo')" gate_d_d5c.py
           grep -q "ALPHAS=(0.25,0.5,1.0)" gate_d_d5c.py
           grep -q "PRIMARY_FROZEN_ALPHA=0.25" gate_d_d5c.py
@@ -78,6 +79,7 @@ jobs:
           grep -q "C1_SELF_CONDITIONING_MISMATCH_CONFIRMED" gate_d_d5c.py
           grep -q "C3_DISCRETE_BRANCH_AMPLIFICATION" gate_d_d5c.py
           grep -q "learner_modified':False" gate_d_d5c.py
+          grep -q "D5BSystem = gate_d_d5b.D5BSystem" gate_d_d5c_pickle_fix.py
           grep -q "held-out gradient batch" GATE_D5C_PROTOCOL.md
           grep -q "frozen-branch" GATE_D5C_PROTOCOL.md
           grep -q "full-CRN" GATE_D5C_PROTOCOL.md
@@ -93,7 +95,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p run_gate_d5c/result
-          python gate_d_d5c.py \
+          python gate_d_d5c_pickle_fix.py \
             --data run_gate_d5c/mnist.npz \
             --tokenizer frozen_r6b1/result/tokenizer.pt \
             --d5b-artifact d5b_source \
