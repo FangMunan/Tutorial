@@ -1,0 +1,143 @@
+name: SNN Transform Gate D6A.2 terminal suppressor map
+
+on:
+  push:
+    branches:
+      - gate-d-plasticity-spectrum-audit
+    paths:
+      - 'snn_transform_r6/gate_d_d6a2.py'
+      - 'snn_transform_r6/gate_d_d6a2_launcher.py'
+      - 'snn_transform_r6/GATE_D6A2_PROTOCOL.md'
+      - '.github/workflows/snn_transform_gate_d_d6a2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  d6a2-terminal-suppressor-map:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+      - name: Download successful D6A artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D6A_PATHWAY_SPECIFIC_REPAIR
+          path: snn_transform_r6/d6a_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39687028646
+      - name: Download successful D6A.1 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D6A1_STATE_DEPENDENT_REPAIR_INTERACTION
+          path: snn_transform_r6/d6a1_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39777693838
+      - name: Download frozen D3E execution anchor
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_D3E_R6B4_NATIVE_EXECUTION_ANCHOR
+          path: snn_transform_r6/d3e_anchor
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39450940230
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_gate_d6a2
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_gate_d6a2/mnist.npz')
+          PY
+      - name: Static audit
+        working-directory: snn_transform_r6
+        shell: bash
+        env:
+          PYTHONPATH: ../snn_transform_p3_image:.
+        run: |
+          set -euo pipefail
+          python -m py_compile gate_d_d6a2.py gate_d_d6a2_launcher.py gate_d_d6a.py gate_d_d6a1.py gate_d_d3e_runtime.py
+          python - <<'PY'
+          import p3i_cb_exact_msdl, gate_d_d6a2, gate_d_d6a2_launcher
+          print('D6A.2 import smoke PASS')
+          PY
+          grep -q "S1_DOMINANT_SINGLE_SUPPRESSOR" gate_d_d6a2.py
+          grep -q "S2_CONTEXT_DEPENDENT_SUPPRESSOR" gate_d_d6a2.py
+          grep -q "S3_DISTRIBUTED_HIGHER_ORDER_SUPPRESSION" gate_d_d6a2.py
+          grep -q "S4_PARTITION_FAILURE" gate_d_d6a2.py
+          grep -q "A0 — forward-partition closure gate" GATE_D6A2_PROTOCOL.md
+          grep -q "No pair search in D6A.2" GATE_D6A2_PROTOCOL.md
+          grep -q "bo_fixed_to_B_in_causal_hybrids" gate_d_d6a2.py
+          test -f d6a_source/result/D6A_SUMMARY.json
+          test -f d6a_source/result/D6A_EFFECT_ARRAYS.npz
+          test -f d6a_source/result/D6A_F_EM_terminal.pkl
+          test -f d6a_source/result/D6A_F_EM_bo_oracle_terminal.pkl
+          test -f d6a_source/result/D6A_F_EM_WO_zero_bo_oracle_terminal.pkl
+          test -f d6a1_source/result/D6A1_SUMMARY.json
+          test -f d6a1_source/result/D6A1_ARRAYS.npz
+          test -f d3e_anchor/result/HISTORICAL_R6B3_R3_T8_REFERENCE_TRACE.json
+      - name: Run Gate D6A.2
+        working-directory: snn_transform_r6
+        shell: bash
+        env:
+          PYTHONPATH: ../snn_transform_p3_image:.
+        run: |
+          set -euo pipefail
+          mkdir -p run_gate_d6a2/result
+          python gate_d_d6a2_launcher.py \
+            --data run_gate_d6a2/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --d6a-artifact d6a_source \
+            --d6a1-artifact d6a1_source \
+            --anchor-artifact d3e_anchor \
+            --out run_gate_d6a2/result \
+            --eval-images 256 --gen-samples 256 --bootstrap 10000 \
+            --encode-batch 256 --seed 7311 --threads 4 \
+            | tee run_gate_d6a2/console.log
+      - name: Show compact D6A.2 result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          f=pathlib.Path('run_gate_d6a2/result/D6A2_SUMMARY.json')
+          if not f.exists():
+              print('D6A2_SUMMARY.json not produced')
+          else:
+              d=json.load(open(f))
+              print(json.dumps({
+                  'classification':d.get('classification'),
+                  'loads':{k:v for k,v in d.get('total_suppression_load_B_minus_H',{}).items() if k in ('F61','D_non61')},
+                  'S1_blocks':d.get('bidirectional_primary_blocks'),
+                  'S2_blocks':d.get('necessity_only_primary_blocks'),
+                  'top_two_blocks':d.get('top_two_blocks'),
+                  'closure_pass':d.get('closure',{}).get('pass'),
+              },indent=2))
+          PY
+      - name: Upload Gate D6A.2 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D6A2_TERMINAL_SUPPRESSOR_MAP
+          path: |
+            snn_transform_r6/run_gate_d6a2/result/
+            snn_transform_r6/run_gate_d6a2/console.log
+          if-no-files-found: warn
+          retention-days: 30
