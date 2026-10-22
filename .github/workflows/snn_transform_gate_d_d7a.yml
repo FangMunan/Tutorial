@@ -164,3 +164,5 @@ jobs:
             snn_transform_r6/run_gate_d7a/console.log
           if-no-files-found: warn
           retention-days: 30
+
+# launch marker: D7A formal run
