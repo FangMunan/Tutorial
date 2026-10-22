@@ -88,7 +88,6 @@ jobs:
           grep -q "P2_ADDITIVE" gate_d_d6a3.py
           grep -q "P3_SYNERGISTIC_FFN_SUPPRESSOR" gate_d_d6a3.py
           grep -q "P4_MIXED_BACKGROUND_DEPENDENT" gate_d_d6a3.py
-          grep -q "No FF1 pair test" GATE_D6A3_PROTOCOL.md || true
           grep -q "No FF1 pair test or broader factorial search" GATE_D6A3_PROTOCOL.md
           grep -q "W2–b2 suppressor interaction test" GATE_D6A3_PROTOCOL.md
           test -f d6a_source/result/D6A_SUMMARY.json
@@ -148,3 +147,4 @@ jobs:
             snn_transform_r6/run_gate_d6a3/console.log
           if-no-files-found: warn
           retention-days: 30
+# launch-only touch
