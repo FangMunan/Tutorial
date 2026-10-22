@@ -80,7 +80,7 @@ jobs:
           grep -q "I1_DIRECT_PATHWAY_COUPLING" gate_d_d6a1.py
           grep -q "I2_MEDIATED_NETWORK_COUPLING" gate_d_d6a1.py
           grep -q "I3_NO_INTRINSIC_BO_REPAIR_DEGRADATION" gate_d_d6a1.py
-          grep -q "common-background bo utility" GATE_D6A1_PROTOCOL.md
+          grep -q "Common-background bo utility" GATE_D6A1_PROTOCOL.md
           grep -q "Hybrid WO-swap" GATE_D6A1_PROTOCOL.md
           grep -q "replay/checkpoint/transplant/readout audit only" GATE_D6A1_PROTOCOL.md
           test -f d6a_source/result/D6A_SUMMARY.json
