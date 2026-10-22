@@ -1,3 +1,4 @@
+# launch trigger after workflow registration
 name: SNN Transform Gate D6A.2 terminal suppressor map
 
 on:
