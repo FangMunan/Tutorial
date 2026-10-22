@@ -103,7 +103,7 @@ jobs:
           grep -q "T3_PARTIAL_W2_TRAJECTORY_RESCUE" gate_d_d7a.py
           grep -q "T0_NO_W2_TRAJECTORY_RESCUE" gate_d_d7a.py
           grep -q "TX_ORACLE_INTERPRETATION_INVALID" gate_d_d7a.py
-          grep -q "time-matched safe-W2 clamp" GATE_D7A_PROTOCOL.md
+          grep -q "Time-matched safe-W2 clamp" GATE_D7A_PROTOCOL.md
           grep -q "No W2×FF1 arm" GATE_D7A_PROTOCOL.md
           test -f d6a_source/result/D6A_SUMMARY.json
           test -f d6a_source/result/D6A_EFFECT_ARRAYS.npz
