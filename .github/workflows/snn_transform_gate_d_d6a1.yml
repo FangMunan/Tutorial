@@ -6,6 +6,7 @@ on:
       - gate-d-plasticity-spectrum-audit
     paths:
       - 'snn_transform_r6/gate_d_d6a1.py'
+      - 'snn_transform_r6/gate_d_d6a1_replay_tol.py'
       - 'snn_transform_r6/GATE_D6A1_PROTOCOL.md'
       - '.github/workflows/snn_transform_gate_d_d6a1.yml'
   workflow_dispatch:
@@ -72,14 +73,15 @@ jobs:
           PYTHONPATH: ../snn_transform_p3_image:.
         run: |
           set -euo pipefail
-          python -m py_compile gate_d_d6a1.py gate_d_d6a.py gate_d_d5c.py gate_d_d5a.py gate_d_d3e_runtime.py r6b4_full_forward_plasticity.py
+          python -m py_compile gate_d_d6a1.py gate_d_d6a1_replay_tol.py gate_d_d6a.py gate_d_d5c.py gate_d_d5a.py gate_d_d3e_runtime.py r6b4_full_forward_plasticity.py
           python - <<'PY'
-          import p3i_cb_exact_msdl, gate_d_d6a1
+          import p3i_cb_exact_msdl, gate_d_d6a1, gate_d_d6a1_replay_tol
           print('D6A.1 import smoke PASS')
           PY
           grep -q "I1_DIRECT_PATHWAY_COUPLING" gate_d_d6a1.py
           grep -q "I2_MEDIATED_NETWORK_COUPLING" gate_d_d6a1.py
           grep -q "I3_NO_INTRINSIC_BO_REPAIR_DEGRADATION" gate_d_d6a1.py
+          grep -q "FIELD_REPLAY_TOL = 1e-8" gate_d_d6a1_replay_tol.py
           grep -q "Common-background bo utility" GATE_D6A1_PROTOCOL.md
           grep -q "Hybrid WO-swap" GATE_D6A1_PROTOCOL.md
           grep -q "replay/checkpoint/transplant/readout audit only" GATE_D6A1_PROTOCOL.md
@@ -98,7 +100,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p run_gate_d6a1/result
-          python gate_d_d6a1.py \
+          python gate_d_d6a1_replay_tol.py \
             --data run_gate_d6a1/mnist.npz \
             --tokenizer frozen_r6b1/result/tokenizer.pt \
             --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
