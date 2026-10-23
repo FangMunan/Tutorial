@@ -6,6 +6,7 @@ on:
       - gate-d-plasticity-spectrum-audit
     paths:
       - 'snn_transform_r6/gate_d_d8a.py'
+      - 'snn_transform_r6/gate_d_d8a_theta_fix.py'
       - 'snn_transform_r6/GATE_D8A_PROTOCOL.md'
       - '.github/workflows/snn_transform_gate_d_d8a.yml'
   workflow_dispatch:
@@ -87,12 +88,13 @@ jobs:
           PYTHONPATH: ../snn_transform_p3_image:.
         run: |
           set -euo pipefail
-          python -m py_compile gate_d_d8a.py gate_d_d7a2.py gate_d_d7a1.py gate_d_d6a.py r6b4_full_forward_plasticity.py
+          python -m py_compile gate_d_d8a.py gate_d_d8a_theta_fix.py gate_d_d7a2.py gate_d_d7a1.py gate_d_d6a.py r6b4_full_forward_plasticity.py
           python - <<'PY'
           import pathlib
-          import p3i_cb_exact_msdl, gate_d_d8a
+          import p3i_cb_exact_msdl, gate_d_d8a, gate_d_d8a_theta_fix
           p = pathlib.Path('GATE_D8A_PROTOCOL.md').read_text(encoding='utf-8')
           src = pathlib.Path('gate_d_d8a.py').read_text(encoding='utf-8')
+          fix = pathlib.Path('gate_d_d8a_theta_fix.py').read_text(encoding='utf-8')
           assert 'gate d8a' in p.lower()
           assert 'disjoint' in p.lower()
           assert 'uncentered' in p.lower()
@@ -101,6 +103,7 @@ jobs:
           assert 'I3_HIGH_DIMENSIONAL_FUNCTIONAL_DISPLACEMENT' in src
           assert 'I4_UNSTABLE_SHARED_MODE' in src
           assert 'D8B_frozen_y_pair_basis' in src
+          assert 'elementwise theta' in fix
           print('D8A import/static smoke PASS')
           PY
           test -f d6a_source/result/D6A_F_EM_WO_zero_bo_oracle_terminal.pkl
@@ -118,7 +121,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p run_gate_d8a/result
-          python gate_d_d8a.py \
+          python gate_d_d8a_theta_fix.py \
             --data run_gate_d8a/mnist.npz \
             --tokenizer frozen_r6b1/result/tokenizer.pt \
             --d6a-artifact d6a_source \
