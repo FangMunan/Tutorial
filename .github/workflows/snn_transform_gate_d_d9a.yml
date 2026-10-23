@@ -6,6 +6,7 @@ on:
       - gate-d-plasticity-spectrum-audit
     paths:
       - 'snn_transform_r6/gate_d_d9a.py'
+      - 'snn_transform_r6/gate_d_d9a_vector_theta_launcher.py'
       - 'snn_transform_r6/GATE_D9A_PROTOCOL.md'
       - '.github/workflows/snn_transform_gate_d_d9a.yml'
   workflow_dispatch:
@@ -103,12 +104,13 @@ jobs:
           PYTHONPATH: ../snn_transform_p3_image:.
         run: |
           set -euo pipefail
-          python -m py_compile gate_d_d9a.py gate_d_d8a.py gate_d_d7a.py gate_d_d6a.py r6b4_full_forward_plasticity.py
+          python -m py_compile gate_d_d9a.py gate_d_d9a_vector_theta_launcher.py gate_d_d8a.py gate_d_d7a.py gate_d_d6a.py r6b4_full_forward_plasticity.py
           python - <<'PY'
           import pathlib
-          import p3i_cb_exact_msdl, gate_d_d9a
+          import p3i_cb_exact_msdl, gate_d_d9a, gate_d_d9a_vector_theta_launcher
           p = pathlib.Path('GATE_D9A_PROTOCOL.md').read_text(encoding='utf-8').lower()
           src = pathlib.Path('gate_d_d9a.py').read_text(encoding='utf-8')
+          launch = pathlib.Path('gate_d_d9a_vector_theta_launcher.py').read_text(encoding='utf-8')
           assert 'trajectory-level rank-1 functional regulation' in p
           assert 'evaluation regulator off' in p or 'regulator is active **only while learning' in p
           assert 'q1 — hard functional projection' in p
@@ -119,6 +121,7 @@ jobs:
           assert 'R0_NO_HARD_FUNCTIONAL_TRAJECTORY_RESCUE' in src
           assert 'projected_oracle_self_test' in src
           assert 'evaluation_regulator_off' in src
+          assert 'np.asarray(system.theta' in launch
           print('D9A import/static smoke PASS')
           PY
           test -f d6a_source/result/D6A_SUMMARY.json
@@ -139,7 +142,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p run_gate_d9a/result
-          python gate_d_d9a.py \
+          python gate_d_d9a_vector_theta_launcher.py \
             --data run_gate_d9a/mnist.npz \
             --tokenizer frozen_r6b1/result/tokenizer.pt \
             --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
