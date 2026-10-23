@@ -6,6 +6,7 @@ on:
       - gate-d-plasticity-spectrum-audit
     paths:
       - 'snn_transform_r6/gate_d_d7a1.py'
+      - 'snn_transform_r6/gate_d_d7a1_same_run_w2.py'
       - 'snn_transform_r6/GATE_D7A1_PROTOCOL.md'
       - '.github/workflows/snn_transform_gate_d_d7a1.yml'
   workflow_dispatch:
@@ -76,10 +77,10 @@ jobs:
           PYTHONPATH: ../snn_transform_p3_image:.
         run: |
           set -euo pipefail
-          python -m py_compile gate_d_d7a1.py gate_d_d7a.py gate_d_d6a2.py gate_d_d6a.py gate_d_d6a1.py
+          python -m py_compile gate_d_d7a1.py gate_d_d7a1_same_run_w2.py gate_d_d7a.py gate_d_d6a2.py gate_d_d6a.py gate_d_d6a1.py
           python - <<'PY'
           import pathlib
-          import p3i_cb_exact_msdl, gate_d_d7a1
+          import p3i_cb_exact_msdl, gate_d_d7a1, gate_d_d7a1_same_run_w2
           p = pathlib.Path('GATE_D7A1_PROTOCOL.md').read_text(encoding='utf-8')
           required = [
               'C1_SINGLE_COMPENSATORY_CARRIER',
@@ -106,6 +107,7 @@ jobs:
           test -f d6a3_source/result/D6A3_SUMMARY.json
           test -f d7a_source/result/D7A_SUMMARY.json
           test -f d7a_source/result/D7A_EFFECT_ARRAYS.npz
+          test -f d7a_source/result/D7A_F_terminal.pkl
           test -f d7a_source/result/D7A_C_W2_safe_clamp_terminal.pkl
           test -f d3e_anchor/result/HISTORICAL_R6B3_R3_T8_REFERENCE_TRACE.json
 
@@ -117,7 +119,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p run_gate_d7a1/result
-          python gate_d_d7a1.py \
+          python gate_d_d7a1_same_run_w2.py \
             --d6a-artifact d6a_source \
             --d6a2-artifact d6a2_source \
             --d6a3-artifact d6a3_source \
