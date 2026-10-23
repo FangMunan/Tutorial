@@ -174,3 +174,5 @@ A2 means overlap in terminal functional effect, not that `bO` is non-causal.
 A3 is the only result that justifies continued study of a compact `(b2,bO)` parameter subsystem.
 A1 means the pair captures a majority of the terminal compensation load, but does not itself prove a low-dimensional functional mode.
 A4 formally ends parameter transplant decomposition and motivates D8.
+
+<!-- launch marker: formal D7A.2 b2+bO stopping audit -->
