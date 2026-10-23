@@ -179,7 +179,7 @@ A pooled candidate is considered **stable** only if, at the selected k:
 
 A k<=3 satisfies all pooled y-space criteria and the split-half stability criteria.
 
-Interpretation: D8A identifies a stable low-dimensional y-space candidate shared by full R→C compensation and the compact `(b2,bO)` subsystem. Freeze `V_y,k` and proceed to a separate D8B bidirectional causal activation intervention on the historical Gate-A 256 only.
+Interpretation: D8A identifies a stable low-dimensional y-space candidate shared by full R→C compensation and the compact `(b2,bO)` subsystem. Freeze the **pair-derived** `V_pair,k` from `DeltaY_pair = Y_P - Y_R` and proceed to a separate D8B bidirectional causal activation intervention on the historical Gate-A 256 only. The full `C-R` displacement is used for capture/alignment tests and is not allowed to redefine the D8B basis after classification.
 
 ### I4_UNSTABLE_SHARED_MODE
 
@@ -203,7 +203,7 @@ Interpretation: the terminal compensation cannot be reduced to a <=3-dimensional
 
 D8A performs no activation intervention and makes no causal harmful-mode claim.
 
-Only `I1_SHARED_LOW_DIMENSIONAL_FUNCTIONAL_CANDIDATE` authorizes D8B. D8B must freeze the D8A-discovered y-space basis before evaluating the historical Gate-A 256, which were never used for discovery.
+Only `I1_SHARED_LOW_DIMENSIONAL_FUNCTIONAL_CANDIDATE` authorizes D8B. D8B must use the frozen discovery-set **pair-derived y-space top-k basis** from `P-R` before evaluating the historical Gate-A 256, which were never used for discovery. No re-fitting or rotation of the basis on Gate-A is permitted.
 
 The intended D8B test is bidirectional:
 
