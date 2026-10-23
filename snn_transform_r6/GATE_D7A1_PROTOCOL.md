@@ -165,3 +165,5 @@ If `FF1` is a carrier, the natural functional hypothesis is that changing h reco
 If upstream Q/K/V/Norm/Embedding blocks dominate, the hypothesis shifts toward input-manifold/routing reorganization around the safe FFN map.
 
 Only after a top carrier is identified should its trajectory emergence be studied. D7A.1 itself performs no trajectory analysis.
+
+<!-- launch marker: formal D7A.1 compensation audit -->
