@@ -82,9 +82,10 @@ jobs:
           import p3i_cb_exact_msdl, gate_d_d8b
           p = pathlib.Path('GATE_D8B_PROTOCOL.md').read_text(encoding='utf-8')
           src = pathlib.Path('gate_d_d8b.py').read_text(encoding='utf-8')
-          assert 'privileged matched-counterfactual causal upper bound' in p
-          assert 'discovery-fixed amplitude' in p
-          assert 'sign flip' in p.lower()
+          pl = p.lower()
+          assert 'privileged matched-counterfactual causal upper bound' in pl
+          assert 'discovery-fixed amplitude' in pl
+          assert 'sign flip' in pl
           assert 'B1_BIDIRECTIONAL_CAUSAL_HARMFUL_FUNCTIONAL_MODE' in src
           assert 'B2_RESCUE_ONLY_FUNCTIONAL_MODE' in src
           assert 'B3_ADDITION_ONLY_FUNCTIONAL_MODE' in src
