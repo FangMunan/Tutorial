@@ -140,7 +140,7 @@ Interpretation: compensation is maintained by a co-adapted configuration and is 
 
 ### C3_DISTRIBUTED_COMPENSATION
 
-Both primary total compensation loads have positive means and no C1/C2 block exists.
+Both primary total compensation-load 95% CIs are entirely >0 and no C1/C2 block exists.
 
 Interpretation: the safe-W2 constraint is bypassed through a distributed terminal configuration. Pair/top-k interaction testing, if needed, requires a separate preregistered gate.
 
@@ -148,9 +148,9 @@ Interpretation: the safe-W2 constraint is bypassed through a distributed termina
 
 Parameter partition/closure passes but all-block Gate-A closure does not reproduce C/R. Stop causal interpretation and repair the audit/evaluator state definition.
 
-### CX_NO_POSITIVE_DUAL_COMPENSATION_LOAD
+### CX_INSUFFICIENT_DUAL_COMPENSATION_LOAD
 
-At least one primary `C-R` mean is non-positive. A suppressive-compensation map is then not the right formal interpretation, although descriptive block results may be reported.
+No C1/C2 block exists and the two primary compensation loads do not both have 95% CIs entirely >0. This includes non-positive or statistically unresolved total load. Descriptive block results may still be reported, but distributed compensation is not established.
 
 A parameter-partition or exact-forward closure failure is a technical failure and is not classified as C1-C4.
 
