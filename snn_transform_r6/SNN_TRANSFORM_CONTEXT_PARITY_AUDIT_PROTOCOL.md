@@ -61,8 +61,8 @@ At the same target position compare:
 Primary paired quantities at 75% visible:
 
 \[
-\Delta P_{true}^{correct-allmask},\qquad
-\Delta P_{true}^{correct-shuffled},\qquad
+\Delta P_{true}^{correct-allmask},\quad
+\Delta P_{true}^{correct-shuffled},\quad
 \Delta P_{true}^{correct-wrong}.
 \]
 
