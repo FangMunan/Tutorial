@@ -1,0 +1,127 @@
+name: SNN Transform Context Parity Audit v1
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  context-parity-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout active SNN-Transform experiment branch
+        uses: actions/checkout@v4
+        with:
+          ref: gate-d-plasticity-spectrum-audit
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+
+      - name: Download completed Adaptive Timescale v1 checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_ADAPTIVE_TIMESCALE_V1
+          path: snn_transform_r6/parent_adaptive_v1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 40115465892
+
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_context_parity_audit
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_context_parity_audit/mnist.npz')
+          PY
+
+      - name: Static audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            snn_transform_context_parity_audit.py \
+            adaptive_timescale_v1.py \
+            r6b4_full_forward_plasticity.py \
+            maskgit_msdl_training.py \
+            maskgit_msdl_training_unconditional.py \
+            r6b2_snn_encoder_p3_msdl.py \
+            ../snn_transform_p3_image/p3i_cb_exact_msdl.py
+          test -f parent_adaptive_v1/result/adaptive_timescale_v1_checkpoint.pkl
+          test -f parent_adaptive_v1/result/ADAPTIVE_TIMESCALE_V1_RESULTS.json
+          grep -q "No training" snn_transform_context_parity_audit.py
+          grep -q "explicit_attention" snn_transform_context_parity_audit.py
+          grep -q "correct.*shuffled.*wrong" snn_transform_context_parity_audit.py
+          grep -q "softmax_transformer_parity_claimed.*False" snn_transform_context_parity_audit.py
+
+      - name: Run read-only context/parity audit
+        working-directory: snn_transform_r6
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=run_context_parity_audit/result
+          mkdir -p "$OUT"
+          python snn_transform_context_parity_audit.py \
+            --data run_context_parity_audit/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint parent_adaptive_v1/result/adaptive_timescale_v1_checkpoint.pkl \
+            --parent-results parent_adaptive_v1/result/ADAPTIVE_TIMESCALE_V1_RESULTS.json \
+            --out "$OUT" \
+            --foreground-samples 256 \
+            --background-samples 128 \
+            --visible-fractions 0,0.10,0.25,0.50,0.75,0.90 \
+            --primary-visible 0.75 \
+            --parity-tol 1e-10 \
+            --encode-batch 256 \
+            --seed 7311 --threads 4 \
+            | tee run_context_parity_audit/console.log
+
+      - name: Show concise result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          test -f run_context_parity_audit/result/CONTEXT_PARITY_AUDIT_SUMMARY.json && python - <<'PY'
+          import json
+          p='run_context_parity_audit/result/CONTEXT_PARITY_AUDIT_SUMMARY.json'
+          d=json.load(open(p))
+          print(json.dumps({
+            'classification':d['classification'],
+            'classification_meaning':d['classification_meaning'],
+            'gates':d['gates'],
+            'parity_max_abs':d['parity_max_abs'],
+            'foreground_primary':d['context_sensitivity']['paired_primary']['foreground'],
+            'attention_structure':d['attention_structure_foreground_primary'],
+            'context_contribution':d['context_contribution_foreground_primary'],
+            'max_forward_parameter_mutation_during_audit':d['max_forward_parameter_mutation_during_audit'],
+          },indent=2))
+          PY
+
+      - name: Upload audit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_CONTEXT_PARITY_AUDIT_V1
+          path: |
+            snn_transform_r6/run_context_parity_audit/result/
+            snn_transform_r6/run_context_parity_audit/console.log
+          if-no-files-found: warn
+          retention-days: 30
