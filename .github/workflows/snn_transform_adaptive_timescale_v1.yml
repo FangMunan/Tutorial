@@ -25,7 +25,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Adaptive Timescale experiment branch
+        uses: actions/checkout@v4
+        with:
+          ref: gate-d-plasticity-spectrum-audit
 
       - uses: actions/setup-python@v5
         with:
