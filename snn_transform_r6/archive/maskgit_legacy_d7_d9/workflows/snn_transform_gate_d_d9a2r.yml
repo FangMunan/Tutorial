@@ -1,0 +1,204 @@
+name: SNN Transform Gate D9A.2-R matched trajectory-relative geometry
+
+on:
+  push:
+    branches:
+      - gate-d-plasticity-spectrum-audit
+    paths:
+      - 'snn_transform_r6/gate_d_d9a2r.py'
+      - 'snn_transform_r6/GATE_D9A2R_PROTOCOL.md'
+      - '.github/workflows/snn_transform_gate_d_d9a2r.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  d9a2r-matched-trajectory-relative-geometry:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 480
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy torch scikit-learn scipy scikit-image matplotlib numba
+
+      - name: Download frozen R6B1 SNN tokenizer
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B1_TUNE_a075_t8
+          path: snn_transform_r6/frozen_r6b1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39139040624
+
+      - name: Download exact R6B3 two-epoch checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_R6B3_G2_TWO_EPOCHS
+          path: snn_transform_r6/prior_g2
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39170815102
+
+      - name: Download successful D7A artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D7A_SAFE_W2_TRAJECTORY_CLAMP
+          path: snn_transform_r6/d7a_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39871827217
+
+      - name: Download successful D8A artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D8A_FUNCTIONAL_MODE_IDENTIFICATION
+          path: snn_transform_r6/d8a_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39979543621
+
+      - name: Download successful D8B artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D8B_CAUSAL_FUNCTIONAL_MODE
+          path: snn_transform_r6/d8b_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 40021397096
+
+      - name: Download successful D9A artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D9A_TRAJECTORY_FUNCTIONAL_REGULATION
+          path: snn_transform_r6/d9a_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 40037197274
+
+      - name: Download successful D9A.1 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D9A1_PLASTIC_FUNCTIONAL_VELOCITY_AUDIT
+          path: snn_transform_r6/d9a1_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 40044084395
+
+      - name: Download frozen D3E execution anchor
+        uses: actions/download-artifact@v4
+        with:
+          name: SNN_TRANSFORM_D3E_R6B4_NATIVE_EXECUTION_ANCHOR
+          path: snn_transform_r6/d3e_anchor
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 39450940230
+
+      - name: Download MNIST
+        working-directory: snn_transform_r6
+        run: |
+          mkdir -p run_gate_d9a2r
+          python - <<'PY'
+          import urllib.request
+          urllib.request.urlretrieve(
+              'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz',
+              'run_gate_d9a2r/mnist.npz')
+          PY
+
+      - name: Static audit
+        working-directory: snn_transform_r6
+        shell: bash
+        env:
+          PYTHONPATH: ../snn_transform_p3_image:.
+        run: |
+          set -euo pipefail
+          python -m py_compile gate_d_d9a2r.py gate_d_d9a1.py gate_d_d7a.py gate_d_d6a.py r6b4_full_forward_plasticity.py
+          python - <<'PY'
+          import pathlib
+          import gate_d_d9a2r
+          p = pathlib.Path('GATE_D9A2R_PROTOCOL.md').read_text(encoding='utf-8')
+          src = pathlib.Path('gate_d_d9a2r.py').read_text(encoding='utf-8')
+          assert 'matched trajectory-relative functional displacement audit' in p.lower()
+          assert 'T1_FIXED_RELATIVE_MODE_ACCUMULATION' in src
+          assert 'T2_LATE_MODE_CONSOLIDATION' in src
+          assert 'T3_ROTATING_OR_PATH_DEPENDENT_RELATIVE_GEOMETRY' in src
+          assert 'T4_TERMINAL_ONLY_CAUSAL_GEOMETRY' in src
+          assert 'R.W2 = np.array(F.W2' in src
+          assert 'rho_v' in src and 'cos_v1_to_terminal_v' in src
+          assert "'controller_authorized': False" in src
+          print('D9A.2-R import/static smoke PASS')
+          PY
+          test -f d7a_source/result/D7A_SUMMARY.json
+          test -f d7a_source/result/D7A_F_terminal.pkl
+          test -f d7a_source/result/D7A_B_terminal.pkl
+          test -f d7a_source/result/D7A_C_W2_safe_clamp_terminal.pkl
+          test -f d8a_source/result/D8A_SUMMARY.json
+          test -f d8a_source/result/D8A_MODES.npz
+          test -f d8b_source/result/D8B_SUMMARY.json
+          test -f d8b_source/result/D8B_EFFECT_ARRAYS.npz
+          test -f d9a_source/result/D9A_SUMMARY.json
+          test -f d9a1_source/result/D9A1_SUMMARY.json
+          test -f d9a1_source/result/D9A1_VELOCITY_ARRAYS.npz
+          test -f d3e_anchor/result/HISTORICAL_R6B3_R3_T8_REFERENCE_TRACE.json
+
+      - name: Run Gate D9A.2-R
+        working-directory: snn_transform_r6
+        shell: bash
+        env:
+          PYTHONPATH: ../snn_transform_p3_image:.
+        run: |
+          set -euo pipefail
+          mkdir -p run_gate_d9a2r/result
+          python gate_d_d9a2r.py \
+            --data run_gate_d9a2r/mnist.npz \
+            --tokenizer frozen_r6b1/result/tokenizer.pt \
+            --checkpoint prior_g2/result/checkpoint_2p0000epoch.pkl \
+            --d7a-artifact d7a_source \
+            --d8a-artifact d8a_source \
+            --d8b-artifact d8b_source \
+            --d9a-artifact d9a_source \
+            --d9a1-artifact d9a1_source \
+            --anchor-artifact d3e_anchor \
+            --out run_gate_d9a2r/result \
+            --contexts 1024 --bootstrap 10000 --encode-batch 256 --seed 7311 --threads 4 \
+            | tee run_gate_d9a2r/console.log
+
+      - name: Show compact D9A.2-R result
+        if: always()
+        working-directory: snn_transform_r6
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          f = pathlib.Path('run_gate_d9a2r/result/D9A2R_SUMMARY.json')
+          if not f.exists():
+              print('D9A2R_SUMMARY.json not produced')
+          else:
+              d = json.load(open(f))
+              print(json.dumps({
+                  'classification': d.get('classification'),
+                  'present_sequence': d.get('present_sequence'),
+                  'checkpoint_geometry': [
+                      {k:r.get(k) for k in (
+                          'context','signed_mean_amplitude','rho_v','frob_norm','EV1',
+                          'cos_v1_to_terminal_v','frozen_mode_present',
+                          'F61_gap_mean','D_non61_gap_mean'
+                      )} for r in d.get('checkpoint_geometry',[])
+                  ],
+                  'decision': d.get('decision'),
+                  'A0': {
+                      'stateless_forward_parity': d.get('stateless_forward_parity'),
+                      'terminal_gate_calibration_to_D8B': d.get('trajectory_provenance',{}).get('terminal_gate_calibration_to_D8B'),
+                      'C_cumulative_W2_clamp_correction': d.get('trajectory_provenance',{}).get('C_cumulative_W2_clamp_correction'),
+                  },
+              }, indent=2))
+          PY
+
+      - name: Upload Gate D9A.2-R artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SNN_TRANSFORM_GATE_D9A2R_MATCHED_TRAJECTORY_RELATIVE_GEOMETRY
+          path: |
+            snn_transform_r6/run_gate_d9a2r/result/
+            snn_transform_r6/run_gate_d9a2r/console.log
+          if-no-files-found: warn
+          retention-days: 30
